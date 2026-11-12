@@ -1,0 +1,22 @@
+{
+  "name": "dsh-plugin-mojobox-p1-first",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "dsh": "0.2.2-rc.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "dsh-plugin-mojobox-missing-test-dependency": "1.0.0"
+  }
+}

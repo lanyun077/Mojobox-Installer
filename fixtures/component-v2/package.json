@@ -1,0 +1,24 @@
+{
+  "name": "dsh-plugin-mojobox-p0-fixture",
+  "version": "0.0.2",
+  "private": true,
+  "description": "Local no-op component for Mojobox P0 acceptance",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "dsh": "0.2.2-rc.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml"
+  ]
+}

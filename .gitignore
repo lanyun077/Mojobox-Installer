@@ -1,0 +1,14 @@
+node_modules/
+lib/
+artifacts/
+reports/
+coverage/
+.cache/
+*.tgz
+*.log
+*.local.*
+.env
+.env.*
+!.env.example
+AGENTS.md
+CLAUDE.md

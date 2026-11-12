@@ -1,1 +1,128 @@
-# Mojobox-Installer
+<h1 align="center">Mojobox Installer</h1>
+
+<p align="center">在官方 DeepSeek Harness 客户端中发现、安装与更新 Mojobox 整合包。</p>
+
+<p align="center">
+  <a href="https://lanyun077.github.io/EAC-mojobox/#/packs">浏览整合包</a> ·
+  <a href="#从这里开始">从这里开始</a> ·
+  <a href="#开发与验证">参与开发</a> ·
+  <a href="docs/architecture.md">架构说明</a> ·
+  <a href="https://github.com/lanyun077/EAC-mojobox">Mojobox 主仓库</a>
+</p>
+
+Mojobox Installer 是 [Mojobox](https://github.com/lanyun077/EAC-mojobox) 面向官方客户端的下游安装管理插件。
+安装器加载后在设置中提供一个 Mojobox 入口，完成导入、预览、选择安装、更新核对与失败项重试。
+
+**主仓库收纳与供给内容，安装器组织安装，官方宿主负责依赖解析和加载。**
+本项目由 Mojobox 维护，面向官版客户端，不表示由 DeepSeek 官方发布或背书；不依赖 EAC 客户端。
+
+> 当前为 `0.0.1-p3.0` 开发预览，已验证宿主为 Windows x64 官方 DeepSeek Harness `0.2.2-rc.1`。
+> 尚未发布正式安装包，也未完成面向普通用户的安装器自身安装流程验收。不要将源码归档当成可直接导入的整合包。
+
+## 从这里开始
+
+| 你想做什么 | 最短路径 |
+| --- | --- |
+| 找插件或整合包 | [浏览 Mojobox 网站](https://lanyun077.github.io/EAC-mojobox/)，查看来源与兼容说明 |
+| 了解安装与更新流程 | 阅读下方[使用流程](#使用流程)及[兼容与限制](docs/compatibility.md) |
+| 开发或验证安装器 | [构建源码](#开发与验证) → 运行测试 → 使用独立 Profile 联调 |
+| 查看代码分工与协议边界 | [架构说明](docs/architecture.md)、[文档索引](docs/README.md) |
+| 报告安装、进度或重试故障 | 在[安装器仓库提交 Issue](https://github.com/lanyun077/Mojobox-Installer/issues)，附版本、复现步骤和脱敏日志 |
+| 纠正包内容或提交新资源 | 前往 [Mojobox 主仓库](https://github.com/lanyun077/EAC-mojobox#提交资源) |
+
+## 可以做什么
+
+| 能力 | 当前行为 |
+| --- | --- |
+| 导入整合包 | 页面内拖拽或选择 Mojobox 薄 `.dshpack`／ZIP，核验根 `pack.json`、归档结构和精确版本 |
+| 远端发现 | 从 Mojobox 生产目录读取可用整合包，按包名浏览，点击查看详情与安装预览 |
+| 选择安装与更新 | 一次确认，可逐项选择新增或更新；同版本复用，保留高版本和已有停用状态 |
+| 总进度与结果 | 确认后显示整体进度，完成后汇总安装、复用、跳过与异常，组件详情按需展开 |
+| 核对新版与重试 | 核对更新先刷新远端；重试只预选失败项，确认后执行，不自动重复提交 |
+| 诊断与日志 | 等待、失败及禁用原因可见；支持复制诊断和保存脱敏 JSON 日志 |
+
+整体百分比按已处理组件数计算，不代表下载字节或剩余时间。远端或 npm 较慢时会显示等待状态。
+
+## 使用流程
+
+以下流程适用于安装器已由开发环境注册到官方客户端后的设置页面。
+
+1. 打开 **设置 → Mojobox**，在「发现」选择整合包，或在「导入」拖入／选择文件。
+2. 查看预览中的内核要求、冲突和插件版本，勾选本次需要新增或更新的组件。
+3. 确认安装，查看总进度；结束后阅读摘要，需要时展开组件详情或按提示重启客户端。
+4. 在「已安装」核对远端新版或重试失败项。两种操作都会先生成预览，确认后再写入。
+5. 出现问题时点击「保存日志」，成功后查看保存位置；写入失败可复制诊断。
+
+安装记录、目录缓存、更新产物与日志保存在当前 Profile 的 `.mojobox-manager/`，详见[数据目录](docs/architecture.md#数据目录)。
+该目录不是完整 Profile 备份；需要恢复测试初态时，应在客户端退出后还原测试前的整个独立 Profile。
+
+## 安装与更新原则
+
+- **幂等复用**：每次按实际库存核对，不重复注册同版本，不自动降级，不接管来源不明的本地链接。
+- **用户选择**：已有低版本会进入更新预览，由用户选择更新哪些组件，不自动替用户全选执行。
+- **保留配置**：更新通过官方 `installBundle` 原位执行，不采用先删除旧版的更新路径；保留既有启停与选择并核对配置变化。
+- **单项隔离**：普通失败且恢复可确认时，继续处理独立项；依赖失败则跳过关联项，恢复结果不明确时暂停后续写入。
+- **不绕过宿主**：冲突、内核不兼容和构建审批均明确提示，不修改官方 SDK、可执行文件或宿主兼容门禁。
+
+插件自身的数据迁移、第三方失维护或内核接口变化需要对应维护者处理；安装器负责准确判断、反馈和避免扩大写入。
+不提供删除／卸载、完整环境迁移、自动升级内核或无确认的后台更新。
+
+## 开发与验证
+
+要求 Node.js **24.9.0 或更新版本**；CI 使用 Node.js 24，在 Windows 和 Linux 上运行源码检查。
+Linux 测试不代表 Linux 官版客户端已适配。开发安装器不需要账号或 API Key。
+
+```bash
+git clone https://github.com/lanyun077/Mojobox-Installer.git
+cd Mojobox-Installer
+npm ci
+npm run typecheck
+npm test
+npm pack --dry-run --ignore-scripts
+```
+
+`npm test` 会先构建，再执行 Node 内置测试；自动化使用临时目录、模拟宿主与本机回环服务，
+不安装目录中的生产插件，也不启动桌面客户端。单独构建用 `npm run build`；需要本地插件归档时，构建后执行 `npm pack --ignore-scripts`。
+`private: true` 保留，源码推送不等于 npm 或正式版本发布。
+
+| 目录／文件 | 用途 |
+| --- | --- |
+| `src/` | TypeScript 事实源：设置页、路由、目录、安装计划、产物校验与宿主契约 |
+| `schema/` | 薄 Feature Pack Schema 副本与来源说明 |
+| `test/` | 输入边界、选择更新、失败恢复、目录与界面行为回归 |
+| `fixtures/` | 无业务数据的受控插件源码，供隔离联调 |
+| `scripts/` | 构建、测试样本与本机测试注册表 |
+| `docs/` | 架构、兼容边界和贡献说明 |
+| `cordis.patch.yml` | 官方宿主 bundle 注册入口 |
+| `.github/workflows/` | 类型检查、测试与打包检查；不自动发布 |
+
+`lib/` 为构建输出；`node_modules/`、`artifacts/`、本机报告和 `*.local.*` 文件不提交。
+正式联调应使用独立 Home、Profile 与桌面数据目录，不使用日常 Profile；测试服务不随插件包分发。
+提交要求、回归范围及诊断信息见[贡献指南](CONTRIBUTING.md)。
+
+## 项目边界与进度
+
+当前具备导入、远端发现、选择更新、失败项重试、配置保护核验、总进度及日志保存。
+2026-11-11 的本机验收完成了生产 npm 目标安装和官版重启加载检查；59 项自动化覆盖管理器与前端行为。
+界面等待和进度还经过官版窗口中的受控故障注入验证，这不等于再次完成真实整包安装。
+
+Windows 文件管理器到客户端的原生拖拽、自身安装分发、复杂插件数据迁移及其他宿主版本仍需专项验收。
+加载成功不等于插件业务工具、模型调用、GPU 或全部设置功能正常。详细范围见[兼容与验证边界](docs/compatibility.md)。
+
+## 相关仓库与协议
+
+| 项目 | 负责内容 | 反馈入口 |
+| --- | --- | --- |
+| [Mojobox 主仓库](https://github.com/lanyun077/EAC-mojobox) | 网站、收录事实源、整合包归档与目录供给 | 内容、来源、版本声明与收录问题 |
+| [Mojobox Installer](https://github.com/lanyun077/Mojobox-Installer) | 官版设置入口、预览、安装协调、更新与诊断 | 安装流程与管理界面问题 |
+
+整合包制作与收录以主仓的[收录规范](https://github.com/lanyun077/EAC-mojobox/blob/main/docs/intake.md)
+和[版本策略](https://github.com/lanyun077/EAC-mojobox/blob/main/docs/intake-version-policy.md)为准，安装器不另立同义协议。
+当前读取 `catalog.mojobox.dev/v1alpha1` 的生产目录；这是当前实现的固定接入契约，不宣称为通用稳定 API。
+协议来源与更新规则见[架构说明](docs/architecture.md#协议与兼容)。
+
+## 许可与反馈
+
+项目代码采用 [MIT](LICENSE)。第三方依赖、Schema 来源、插件、皮肤和素材保留各自许可与署名；
+安装器的许可不授予上游资源的再分发权。
+故障与建议请[提交 Issue](https://github.com/lanyun077/Mojobox-Installer/issues)，不要上传账号凭据、完整 Profile 或聊天内容。
