@@ -19,7 +19,7 @@ export const name = 'mojobox-manager';
 export const inject = ['pluginManager', 'profileContext', 'connection'];
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'cache-control': 'no-store' } });
 
-export function createHandler(manager: PackManager, action: 'status' | 'preview' | 'start' | 'replan' | 'catalog' | 'catalog-refresh' | 'catalog-preview' | 'save-log', catalog?: Catalog) {
+export function createHandler(manager: PackManager, action: 'status' | 'preview' | 'start' | 'replan' | 'remove-preview' | 'component' | 'catalog' | 'catalog-refresh' | 'catalog-preview' | 'save-log', catalog?: Catalog) {
   return async (request: Request): Promise<Response> => {
     try {
       if (action === 'status') {
@@ -38,6 +38,14 @@ export function createHandler(manager: PackManager, action: 'status' | 'preview'
       if (bytes.length > limit) return json({ error: 'Request body too large' }, 413);
       if (action === 'preview') return json(await manager.preview(bytes));
       const selection = JSON.parse(bytes.toString('utf8'));
+      if (action === 'component') {
+        if (!selection || typeof selection.name !== 'string' || typeof selection.expected !== 'string' || !['enable', 'pause', 'delete'].includes(selection.action)) return json({ error: 'Invalid component action' }, 400);
+        return json(await manager.controlComponent(selection.name, selection.action, selection.expected));
+      }
+      if (action === 'remove-preview') {
+        if (!selection || typeof selection.recordId !== 'string') return json({ error: 'Invalid record selection' }, 400);
+        return json(await manager.previewRemoval(selection.recordId));
+      }
       if (action === 'save-log') {
         if (!selection || typeof selection !== 'object' || Array.isArray(selection) || Object.keys(selection).some(key => !['taskId', 'context'].includes(key)) || (selection.taskId !== undefined && typeof selection.taskId !== 'string')) return json({ error: 'Invalid log selection' }, 400);
         if (selection.context !== undefined && (!selection.context || typeof selection.context !== 'object' || Array.isArray(selection.context) || Object.entries(selection.context).some(([key, value]) => !['error', 'connectionError', 'pending'].includes(key) || typeof value !== 'string' || value.length > 4000))) return json({ error: 'Invalid log context' }, 400);
@@ -86,7 +94,7 @@ export async function apply(ctx: HostContext) {
   const catalog = new Catalog(join(profile.dir, '.mojobox-manager', 'catalog.json'));
   await catalog.initialize();
   ctx.effect(() => () => manager.dispose());
-  for (const action of ['status', 'preview', 'start', 'replan', 'catalog', 'catalog-refresh', 'catalog-preview', 'save-log'] as const) {
+  for (const action of ['status', 'preview', 'start', 'replan', 'remove-preview', 'component', 'catalog', 'catalog-refresh', 'catalog-preview', 'save-log'] as const) {
     ctx.effect(() => ctx.connection.fetch.register({
       path: `/api/mojobox/${action}`, methods: [['status', 'catalog'].includes(action) ? 'GET' : 'POST'],
       requestBody: 'buffered', fetch: createHandler(manager, action, catalog)

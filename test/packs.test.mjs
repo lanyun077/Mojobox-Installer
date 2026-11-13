@@ -18,7 +18,7 @@ export async function archive(value, entries = []) {
   for await (const chunk of zip.outputStream) chunks.push(chunk);
   return Buffer.concat(chunks);
 }
-const bundle = (name, patch = {}) => ({ name, version: '1.0.0', installed: true, availability: 'profile', enabled: true, source: `${name}@1.0.0`, ...patch });
+const bundle = (name, patch = {}) => ({ name, version: '1.0.0', installed: true, availability: 'profile', enabled: true, source: `${name}@1.0.0`, removable: true, ...patch });
 async function setup(t, changes = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'mojobox-test-'));
   t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
@@ -59,6 +59,235 @@ async function finish(coordinator) {
   }
   assert.fail('task did not settle');
 }
+
+async function installedPack(env, plugins = ['first', 'last'], patch = {}) {
+  const plan = await env.coordinator.preview(await archive(manifest(plugins.map(ref => ({ ref, version: '1.0.0' })), patch)));
+  await env.coordinator.start(plan.id, plan.selected);
+  return finish(env.coordinator);
+}
+
+function enableRemoval(env, calls = []) {
+  env.manager.removeBundle = async ref => {
+    calls.push(ref);
+    env.bundles.splice(env.bundles.findIndex(bundle => bundle.name === ref), 1);
+    return { application: 'applied', changed: true };
+  };
+  return calls;
+}
+
+test('component actions use current inventory, preserve pack records and allow an explicit shared deletion', async t => {
+  const env = await setup(t);
+  const record = await installedPack(env, ['first']);
+  const removes = enableRemoval(env);
+  env.manager.setBundleEnabled = async (name, enabled) => {
+    env.bundles.find(bundle => bundle.name === name).enabled = enabled;
+    return { application: 'applied', changed: true };
+  };
+  let component = (await env.coordinator.status()).components.find(item => item.name === 'first');
+  assert.deepEqual(component.packs, ['Test']);
+  assert.equal((await env.coordinator.controlComponent('first', 'pause', component.stamp)).status, 'complete');
+  component = (await env.coordinator.status()).components.find(item => item.name === 'first');
+  assert.equal(component.enabled, false);
+  assert.equal((await env.coordinator.controlComponent('first', 'enable', component.stamp)).status, 'complete');
+  // A second pack may refer to the same plugin; deletion remains an explicit per-plugin action.
+  await installedPack(env, ['first'], { id: 'second-pack', name: 'Other' });
+  component = (await env.coordinator.status()).components.find(item => item.name === 'first');
+  assert.deepEqual(component.packs.sort(), ['Other', 'Test']);
+  assert.equal((await env.coordinator.controlComponent('first', 'delete', component.stamp)).status, 'complete');
+  assert.deepEqual(removes, ['first']);
+  const status = await env.coordinator.status();
+  assert.equal(status.components.length, 0);
+  assert.ok(status.records.find(item => item.id === record.id && !item.removedAt));
+});
+
+test('component mutations reject stale identity, protected targets and invalid route actions', async t => {
+  const env = await setup(t);
+  env.bundles.push(bundle('local', { source: 'link:../local' }), bundle('protected', { readOnlyReason: 'management-required' }));
+  const calls = enableRemoval(env);
+  const components = (await env.coordinator.status()).components;
+  const local = components.find(item => item.name === 'local');
+  env.bundles[0].version = '2.0.0';
+  await assert.rejects(env.coordinator.controlComponent('local', 'delete', local.stamp), /状态已变化/);
+  const protectedComponent = components.find(item => item.name === 'protected');
+  await assert.rejects(env.coordinator.controlComponent('protected', 'delete', protectedComponent.stamp), /宿主或管理组件/);
+  assert.equal(calls.length, 0);
+  const handler = createHandler(env.coordinator, 'component');
+  const response = await handler(new Request('http://local/api/mojobox/component', { method: 'POST', body: JSON.stringify({ name: 'local', action: 'erase', expected: '' }) }));
+  assert.equal(response.status, 400);
+  assert.equal((await env.coordinator.status()).busy, false);
+});
+
+test('component operation holds the shared lock and reports actual partial failure and restart requirements', async t => {
+  const env = await setup(t);
+  env.bundles.push(bundle('first'));
+  let release;
+  env.manager.setBundleEnabled = async (_name, enabled) => { await new Promise(resolve => { release = resolve; }); env.bundles[0].enabled = enabled; return { application: 'restart-required', changed: true }; };
+  const component = (await env.coordinator.status()).components[0];
+  const pending = env.coordinator.controlComponent('first', 'pause', component.stamp);
+  await new Promise(setImmediate);
+  assert.equal((await env.coordinator.status()).busy, true);
+  await assert.rejects(env.coordinator.controlComponent('first', 'delete', component.stamp), /等待/);
+  release(); const paused = await pending;
+  assert.equal(paused.status, 'complete'); assert.match(paused.message, /重启/);
+  env.manager.removeBundle = async () => { env.bundles.length = 0; return { application: 'failed', changed: true, error: { code: 'pnpm-failed' } }; };
+  const current = (await env.coordinator.status()).components[0];
+  const result = await env.coordinator.controlComponent('first', 'delete', current.stamp);
+  assert.equal(result.status, 'unconfirmed');
+  assert.equal((await env.coordinator.status()).components.length, 0);
+  assert.equal((await env.coordinator.status()).componentOperation.status, 'unconfirmed');
+});
+
+test('pack preview follows official prerelease compatibility semantics', async t => {
+  const env = await setup(t);
+  const plan = await env.coordinator.preview(await archive(manifest(undefined, { requires: { dsh: '>=0.2.1 <0.3.0' } })));
+  assert.equal(plan.blocked, undefined);
+  assert.equal(plan.items[0].action, 'install');
+});
+
+test('removal is opt-in, uses the host and retains unselected plugins and durable history', async t => {
+  const env = await setup(t);
+  const record = await installedPack(env);
+  const calls = enableRemoval(env);
+  const plan = await env.coordinator.previewRemoval(record.id);
+  assert.equal(plan.operation, 'remove');
+  assert.deepEqual(plan.selected, []);
+  assert.deepEqual(plan.items.map(item => item.action), ['remove', 'remove']);
+  assert.deepEqual(calls, []);
+  await assert.rejects(env.coordinator.start(plan.id, ['unknown']), /Selection/);
+  await assert.rejects(env.coordinator.start(plan.id, ['first', 'first']), /Selection/);
+  await env.coordinator.start(plan.id, ['first']);
+  const task = await finish(env.coordinator);
+  assert.deepEqual(calls, ['first']);
+  assert.deepEqual(task.items.map(item => item.status), ['removed', 'retained']);
+  assert.equal(task.status, 'complete');
+  assert.ok(task.removedAt);
+  assert.deepEqual(env.bundles.map(item => item.name), ['last']);
+  assert.equal((await env.store.read())[0].removedAt, task.removedAt);
+  await assert.rejects(env.coordinator.start(plan.id, ['last']), /expired/);
+  await assert.rejects(env.coordinator.previewRemoval(task.id), /Active pack/);
+  const reinstall = await env.coordinator.replan(task.id, false);
+  assert.deepEqual(reinstall.items.map(item => item.action), ['install', 'reuse']);
+});
+
+test('record-only removal does not call host or leave a shared-pack claim', async t => {
+  const env = await setup(t);
+  const first = await installedPack(env, ['shared'], { id: 'first', name: 'First' });
+  const second = await installedPack(env, ['shared'], { id: 'second', name: 'Second' });
+  const calls = enableRemoval(env);
+  const plan = await env.coordinator.previewRemoval(first.id);
+  assert.equal(plan.items[0].action, 'keep');
+  assert.match(plan.items[0].reason, /Second/);
+  await assert.rejects(env.coordinator.start(plan.id, ['shared']), /Selection/);
+  await env.coordinator.start(plan.id, []);
+  await finish(env.coordinator);
+  assert.deepEqual(calls, []);
+  assert.equal(env.bundles.length, 1);
+  assert.equal((await env.coordinator.previewRemoval(second.id)).items[0].action, 'remove');
+});
+
+test('removal protects official, management, read-only and foreign local sources', async t => {
+  const env = await setup(t);
+  const refs = ['official', 'readonly', 'foreign', 'host-no', 'unknown', 'dsh-plugin-mojobox'];
+  const record = await installedPack(env, refs);
+  enableRemoval(env);
+  Object.assign(env.bundles[0], { official: true });
+  Object.assign(env.bundles[1], { readOnlyReason: 'management-required' });
+  Object.assign(env.bundles[2], { source: 'link:../foreign' });
+  Object.assign(env.bundles[3], { removable: false });
+  Object.assign(env.bundles[4], { error: { code: 'broken' } });
+  const plan = await env.coordinator.previewRemoval(record.id);
+  assert.ok(plan.items.every(item => item.action === 'keep'));
+  await assert.rejects(env.coordinator.start(plan.id, ['official']), /Selection/);
+});
+
+test('missing removal capability and already absent bundles stay record-only', async t => {
+  const env = await setup(t);
+  const record = await installedPack(env);
+  env.bundles.pop();
+  const plan = await env.coordinator.previewRemoval(record.id);
+  assert.ok(plan.items.every(item => item.action === 'keep'));
+  assert.match(plan.items[0].reason, /未提供卸载接口/);
+  assert.match(plan.items[1].reason, /未安装/);
+  await env.coordinator.start(plan.id, []);
+  assert.equal((await finish(env.coordinator)).status, 'complete');
+});
+
+test('removal rechecks version, source, enablement and removability after preview', async t => {
+  for (const change of [{ version: '1.1.0' }, { source: 'first@^1.0.0' }, { enabled: false }, { removable: false }]) {
+    const env = await setup(t);
+    const record = await installedPack(env, ['first']);
+    const calls = enableRemoval(env);
+    const plan = await env.coordinator.previewRemoval(record.id);
+    Object.assign(env.bundles[0], change);
+    await env.coordinator.start(plan.id, ['first']);
+    const task = await finish(env.coordinator);
+    assert.equal(task.items[0].status, 'failed');
+    assert.equal(task.removedAt, undefined);
+    assert.deepEqual(calls, []);
+  }
+});
+
+test('ordinary removal failure continues independent items; uncertain outcomes stop writes', async t => {
+  for (const outcome of ['failed', 'partial-write', 'false-success', 'throw']) {
+    const env = await setup(t);
+    const record = await installedPack(env);
+    const calls = enableRemoval(env);
+    const remove = env.manager.removeBundle;
+    env.manager.removeBundle = async ref => {
+      if (ref !== 'first') return remove(ref);
+      calls.push(ref);
+      if (outcome === 'throw') throw new Error('connection token=secret lost');
+      if (outcome === 'false-success') return { application: 'applied', changed: true };
+      if (outcome === 'partial-write') env.bundles[0].enabled = false;
+      return { application: 'failed', changed: outcome === 'partial-write', error: { code: 'operation-error' } };
+    };
+    const plan = await env.coordinator.previewRemoval(record.id);
+    await env.coordinator.start(plan.id, ['first', 'last']);
+    const task = await finish(env.coordinator);
+    assert.deepEqual(task.items.map(item => item.status), outcome === 'failed' ? ['failed', 'removed'] : ['unconfirmed', 'unconfirmed']);
+    assert.deepEqual(calls, outcome === 'failed' ? ['first', 'last'] : ['first']);
+    assert.equal(task.removedAt, undefined);
+    assert.doesNotMatch(JSON.stringify(task), /secret/);
+    const retry = await env.coordinator.previewRemoval(task.id);
+    assert.deepEqual(retry.selected, []);
+    assert.equal((await env.coordinator.replan(task.id, true)).operation, 'remove');
+  }
+});
+
+test('removal shares the write lock, persists interruption and reports required restarts', async t => {
+  const env = await setup(t);
+  const record = await installedPack(env);
+  let release;
+  env.manager.removeBundle = async () => {
+    await new Promise(resolve => { release = resolve; });
+    env.bundles.shift();
+    return { application: 'restart-required', changed: true };
+  };
+  const plan = await env.coordinator.previewRemoval(record.id);
+  await env.coordinator.start(plan.id, ['first', 'last']);
+  for (let i = 0; !release && i < 200; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.ok(release);
+  await assert.rejects(env.coordinator.previewRemoval(record.id), /busy/);
+  await assert.rejects(env.coordinator.preview(await archive(manifest())), /busy/);
+  const saved = await env.store.read();
+  assert.equal(saved[0].operation, 'remove');
+  assert.equal(saved[0].status, 'interrupted');
+  env.coordinator.dispose(); release();
+  const task = await finish(env.coordinator);
+  assert.equal(task.items[0].activation, 'restart-required');
+  assert.equal(task.items[1].status, 'unconfirmed');
+});
+
+test('removal route accepts only a stored record and never trusts a submitted plugin name', async t => {
+  const env = await setup(t);
+  const record = await installedPack(env, ['first']);
+  const calls = enableRemoval(env);
+  const handler = createHandler(env.coordinator, 'remove-preview');
+  const request = value => new Request('http://local/api/mojobox/remove-preview', { method: 'POST', body: JSON.stringify(value) });
+  for (const value of [null, [], { ref: 'first' }, { recordId: 1 }, { recordId: 'missing' }]) assert.equal((await handler(request(value))).status, 400);
+  assert.equal((await handler(request({ recordId: record.id }))).status, 200);
+  assert.deepEqual(calls, []);
+});
 
 test('thin pack accepts exact external versions and prerelease host range', async () => {
   const bytes = await archive(manifest());
@@ -356,7 +585,7 @@ test('Host registration uses the authenticated owner Connection and disposes all
   await writeFile(join(env.directory, 'package.json'), JSON.stringify({ version: '0.2.2-rc.1' }));
   const routes = []; const cleanups = [];
   await apply({ pluginManager: env.manager, profileContext: { dir: env.directory, installAnchor: join(env.directory, 'package.json') }, connection: { fetch: { register: route => { routes.push(route); return () => routes.splice(routes.indexOf(route), 1); } } }, effect: fn => cleanups.push(fn()), logger: { info() {} } });
-  assert.deepEqual(routes.map(route => [route.path, route.methods]), [['/api/mojobox/status', ['GET']], ['/api/mojobox/preview', ['POST']], ['/api/mojobox/start', ['POST']], ['/api/mojobox/replan', ['POST']], ['/api/mojobox/catalog', ['GET']], ['/api/mojobox/catalog-refresh', ['POST']], ['/api/mojobox/catalog-preview', ['POST']], ['/api/mojobox/save-log', ['POST']]]);
+  assert.deepEqual(routes.map(route => [route.path, route.methods]), [['/api/mojobox/status', ['GET']], ['/api/mojobox/preview', ['POST']], ['/api/mojobox/start', ['POST']], ['/api/mojobox/replan', ['POST']], ['/api/mojobox/remove-preview', ['POST']], ['/api/mojobox/component', ['POST']], ['/api/mojobox/catalog', ['GET']], ['/api/mojobox/catalog-refresh', ['POST']], ['/api/mojobox/catalog-preview', ['POST']], ['/api/mojobox/save-log', ['POST']]]);
   for (const cleanup of cleanups.reverse()) cleanup();
   assert.equal(routes.length, 0);
 });

@@ -78,6 +78,18 @@ test('newer detection preserves local targets; metadata and disappearance do not
   records[0].pack.sha256 = 'b'.repeat(64); assert.match(catalog.view(host, records).entries[0].blocked, /摘要/);
   state.document.packs = []; await catalog.refresh(); assert.equal(catalog.view(host, records).entries.length, 0); assert.equal(records.length, 1);
 });
+
+test('catalog uses prerelease host ranges and removed records keep identity without update badges', async t => {
+  const { catalog, entry } = await setup(t, manifest({ requires: { dsh: '>=0.2.1 <0.3.0' } }));
+  await catalog.refresh();
+  const records = [{ removedAt: '2026-11-12T00:00:00Z', pack: { manifest: manifest({ version: '1.0.0' }), sha256: 'a'.repeat(64) } }];
+  const view = catalog.view(host, records).entries[0];
+  assert.equal(view.blocked, undefined);
+  assert.equal(view.installedVersion, undefined);
+  assert.equal(view.newer, false);
+  records[0].pack.manifest.version = entry.metadata.version;
+  assert.match(catalog.view(host, records).entries[0].blocked, /摘要/);
+});
 test('download enforces exact size, digest, archive identity and declarations before preview', async t => {
   for (const mutation of ['size', 'digest', 'id', 'version', 'requires', 'components']) {
     const { catalog, state, entry } = await setup(t);

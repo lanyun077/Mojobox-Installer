@@ -64,8 +64,8 @@ export class Catalog {
   view(hostVersion: string, records: TaskRecord[]): CatalogView {
     return { checkedAt: this.cache?.checkedAt, stale: this.stale, error: this.error, entries: this.entries.map(entry => {
       const record = records.find(record => record.pack.manifest.id === entry.id);
-      const installedVersion = record?.pack.manifest.version;
-      const blocked = !entry.requires ? '整包未声明内核兼容范围，无法安装' : !semver.satisfies(hostVersion, entry.requires) ? `整包要求内核 ${entry.requires}，当前为 ${hostVersion}` :
+      const installedVersion = record?.removedAt ? undefined : record?.pack.manifest.version;
+      const blocked = !entry.requires ? '整包未声明内核兼容范围，无法安装' : !semver.satisfies(hostVersion, entry.requires, { includePrerelease: true }) ? `整包要求内核 ${entry.requires}，当前为 ${hostVersion}` :
         record?.pack.manifest.version === entry.version && `sha256:${record.pack.sha256}` !== entry.archiveDigest ? '同版本归档摘要与本地记录不同，已停止远端安装' : undefined;
       return { ...entry, installedVersion, blocked, newer: !this.stale && !blocked && !!semver.valid(installedVersion) && semver.gt(entry.version, installedVersion!) };
     }) };

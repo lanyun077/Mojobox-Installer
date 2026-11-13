@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import semver from 'semver';
 import { NPM_NAME, readFeaturePack } from './feature-pack.js';
 import type { FeaturePack } from './feature-pack.js';
-import type { Bundle, InstallResult, PluginManager, RuntimeEntry } from './contracts.js';
+import type { Bundle, InstallResult, PluginManager, RuntimeEntry, ManagedComponent, ComponentAction, ComponentOperation } from './contracts.js';
 import type { ArtifactSource, ArtifactTarget } from './artifacts.js';
 
 export interface PlanItem {
@@ -12,13 +12,16 @@ export interface PlanItem {
   target?: string;
   current?: string;
   enabled?: boolean;
-  action: 'install' | 'reuse' | 'update' | 'keep-newer' | 'unsupported';
+  action: 'install' | 'reuse' | 'update' | 'keep-newer' | 'unsupported' | 'remove' | 'keep';
+  source?: string;
   reason: string;
   sharedTargets?: { id: string; name: string; version: string }[];
   requirements?: { ref: string; range: string }[];
 }
 export interface Plan {
   id: string;
+  operation?: 'remove';
+  recordId?: string;
   source?: 'local' | 'catalog';
   pack: FeaturePack;
   hostVersion: string;
@@ -28,7 +31,7 @@ export interface Plan {
 }
 export interface ComponentResult {
   ref: string;
-  status: 'pending' | 'running' | 'installed' | 'reused' | 'skipped' | 'dependency-skipped' | 'failed' | 'unconfirmed';
+  status: 'pending' | 'running' | 'installed' | 'reused' | 'skipped' | 'dependency-skipped' | 'failed' | 'unconfirmed' | 'removed' | 'retained';
   reason: string;
   target?: string;
   observed?: string;
@@ -37,6 +40,8 @@ export interface ComponentResult {
 }
 export interface TaskRecord {
   id: string;
+  operation?: 'remove';
+  removedAt?: string;
   pack: FeaturePack;
   hostVersion: string;
   source: 'local' | 'catalog';
@@ -119,6 +124,7 @@ export class PackManager {
   private records: TaskRecord[] = [];
   private task?: TaskRecord;
   private targets = new Map<string, ArtifactTarget>();
+  private componentOperation?: ComponentOperation;
   constructor(
     private manager: PluginManager,
     private hostVersion: string,
@@ -136,10 +142,10 @@ export class PackManager {
     const status = await this.status();
     const tasks = records.map(task => ({
       id: task.id, pack: { id: task.pack.manifest.id, name: task.pack.manifest.name, version: task.pack.manifest.version, sha256: task.pack.sha256 },
-      status: task.status, hostVersion: task.hostVersion, startedAt: task.startedAt, finishedAt: task.finishedAt,
+      status: task.status, operation: task.operation, removedAt: task.removedAt, hostVersion: task.hostVersion, startedAt: task.startedAt, finishedAt: task.finishedAt,
       items: task.items.map(item => ({ ...item, reason: redact(item.reason), result: item.result ? safeResult(item.result) : undefined }))
     }));
-    return { path: await this.store.saveLog({ createdAt: new Date().toISOString(), installerVersion: '0.0.1-p3.0', hostVersion: this.hostVersion, busy: this.busy, context: Object.fromEntries(Object.entries(context).map(([key, value]) => [key, redact(value)])), records: tasks, bundles: status.bundles, runtime: status.runtime }) };
+    return { path: await this.store.saveLog({ createdAt: new Date().toISOString(), installerVersion: '0.0.1-p3.0', hostVersion: this.hostVersion, busy: this.busy, componentOperation: this.componentOperation, context: Object.fromEntries(Object.entries(context).map(([key, value]) => [key, redact(value)])), records: tasks, bundles: status.bundles, runtime: status.runtime }) };
   }
   dispose() { this.disposed = true; }
   private conflictReason(pack: FeaturePack, bundles: Bundle[]): string | undefined {
@@ -151,9 +157,58 @@ export class PackManager {
   }
   async status() {
     const [bundles, runtime] = await Promise.all([this.manager.listBundles(), this.manager.listPlugins()]);
-    return { hostVersion: this.hostVersion, busy: this.busy, task: this.task, records: this.records,
+    return { hostVersion: this.hostVersion, busy: this.busy, task: this.task, records: this.records, componentOperation: this.componentOperation,
+      components: bundles.filter(bundle => bundle.installed || bundle.enabled).map(bundle => this.componentInfo(bundle)),
       bundles: bundles.map(({ name, version, installed, availability, enabled, error }) => ({ name, version, installed, availability, enabled, error: error ? { code: error.code } : undefined })),
       runtime: runtime.map(({ entryId, moduleName, enabled, fiberPhase }) => ({ entryId, moduleName, enabled, fiberPhase })) };
+  }
+  private componentInfo(bundle: Bundle): ManagedComponent {
+    const protectedReason = bundle.readOnlyReason || bundle.official || bundle.availability === 'installation' || bundle.name === 'dsh-plugin-mojobox'
+      ? '宿主或管理组件，请在官方插件页管理' : !NPM_NAME.test(bundle.name) ? '无法确认组件包名' : undefined;
+    const { name, version, installed, availability, enabled, source, official, readOnlyReason, removable } = bundle;
+    return { name, version, installed, availability, enabled, source, official, readOnlyReason, removable,
+      description: bundle.description?.slice(0, 1000), rows: bundle.rows?.map(({ entryId, rowId, moduleName }) => ({ entryId, rowId, moduleName })),
+      error: bundle.error ? { code: bundle.error.code } : undefined,
+      stamp: JSON.stringify([bundle.name, bundle.version, bundle.source, bundle.enabled, bundle.installed, bundle.availability, bundle.removable, bundle.readOnlyReason, bundle.error?.code]),
+      toggleReason: protectedReason || (!this.manager.setBundleEnabled ? '当前宿主不支持启用或暂停' : !bundle.installed ? '组件未安装' : !bundle.enabled && bundle.error ? `请先处理组件异常：${bundle.error.code}` : undefined),
+      deleteReason: protectedReason || (!this.manager.removeBundle ? '当前宿主不支持删除' : bundle.removable !== true || !bundle.installed || bundle.availability !== 'profile' ? '宿主未允许删除此组件' : undefined),
+      packs: [...new Set(this.records.filter(record => !record.removedAt && record.operation !== 'remove' && record.pack.manifest.plugins.some(plugin => plugin.ref === bundle.name)).map(record => record.pack.manifest.name))]
+    };
+  }
+  async controlComponent(name: string, action: ComponentAction, expected: string): Promise<ComponentOperation> {
+    if (this.busy || this.disposed) throw new Error('请等待当前操作完成');
+    this.busy = true;
+    try {
+      const bundle = (await this.manager.listBundles()).find(item => item.name === name);
+      if (!bundle) throw new Error('组件已不在当前库存，请刷新后重试');
+      const current = this.componentInfo(bundle);
+      if (current.stamp !== expected) throw new Error('组件状态已变化，请刷新后重新确认');
+      const refusal = action === 'delete' ? current.deleteReason : current.toggleReason;
+      if (refusal) throw new Error(refusal);
+      const operation: ComponentOperation = { name, action, status: 'running', message: '宿主正在处理此组件…' };
+      this.componentOperation = operation;
+      // A component change invalidates any earlier install/removal preview.
+      this.plan = undefined;
+      try {
+        const result = safeResult(action === 'delete' ? await this.manager.removeBundle!(name) : await this.manager.setBundleEnabled!(name, action === 'enable'));
+        operation.result = result;
+        const observed = (await this.manager.listBundles()).find(item => item.name === name);
+        const confirmed = action === 'delete' ? !observed?.installed && !observed?.enabled : observed?.enabled === (action === 'enable');
+        const accepted = ['applied', 'restart-required', 'overridden'].includes(result.application) && !result.error;
+        operation.status = accepted && confirmed ? 'complete' : accepted || result.changed ? 'unconfirmed' : 'failed';
+        const label = action === 'delete' ? '删除' : action === 'enable' ? '启用' : '暂停';
+        operation.message = operation.status === 'complete' ? `已${label}${result.application === 'restart-required' ? '，请重启客户端后生效' : ''}`
+          : result.application === 'overridden' ? '设置被其他配置覆盖，请在官方插件页核对'
+          : result.error?.code === 'bundle-in-use' ? '组件仍在运行，无法删除。请先暂停并核对状态后重试'
+          : result.error?.code === 'stop-profile' ? '宿主要求停止运行后再操作，请退出客户端后使用官方管理方式处理'
+          : operation.status === 'unconfirmed' ? '操作结果待核对，请刷新查看当前状态，不要重复提交'
+          : `${label}未完成：${result.error?.code ?? result.application}，请核对当前状态后重试`;
+      } catch (error) {
+        operation.status = 'unconfirmed';
+        operation.message = `操作结果未确认：${redact(String(error))}。请刷新核对当前状态`;
+      }
+      return operation;
+    } finally { this.busy = false; }
   }
   private async classify(ref: string, target: string | undefined, bundles: Bundle[]): Promise<PlanItem> {
     const item: PlanItem = { ref, target, action: 'unsupported', reason: '' };
@@ -178,9 +233,37 @@ export class PackManager {
     return { ...item, action: 'install', reason: '新增组件' };
   }
   async preview(bytes: Buffer, source: TaskRecord['source'] = 'local'): Promise<Plan> { return this.buildPlan(() => readFeaturePack(bytes), undefined, source); }
+  private removalItem(ref: string, bundles: Bundle[], packId: string): PlanItem {
+    const bundle = bundles.find(item => item.name === ref && (item.installed || item.availability !== 'missing'));
+    const item: PlanItem = { ref, current: bundle?.version, enabled: bundle?.enabled, source: bundle?.source, action: 'keep', reason: '' };
+    if (!bundle) return { ...item, reason: '未安装，无需卸载' };
+    const shared = this.records.filter(record => !record.removedAt && record.pack.manifest.id !== packId && record.pack.manifest.plugins.some(plugin => plugin.ref === ref));
+    if (shared.length) return { ...item, reason: `其他整合包仍引用：${shared.map(record => record.pack.manifest.name).join('、')}，保留组件` };
+    if (!this.manager.removeBundle) return { ...item, reason: '当前宿主未提供卸载接口' };
+    if (!NPM_NAME.test(ref) || ref === 'dsh-plugin-mojobox' || !bundle.installed || bundle.availability !== 'profile' || bundle.official || bundle.readOnlyReason || bundle.removable !== true || bundle.error || !semver.valid(bundle.version)) return { ...item, reason: '宿主组件、管理组件或状态不明的组件，保持原样' };
+    const ownedArtifact = this.records.some(record => {
+      const artifact = record.artifacts?.[ref];
+      return !!artifact && artifact.version === bundle.version && !!bundle.source && this.artifacts?.owns(bundle.source, artifact.sha512);
+    });
+    if (!ownedArtifact && (!bundle.source || (bundle.source !== ref && (!bundle.source.startsWith(`${ref}@`) || !semver.validRange(bundle.source.slice(ref.length + 1)))))) return { ...item, reason: '本地链接或其他来源，不自动接管' };
+    return { ...item, action: 'remove', reason: '默认保留；勾选后通过官方接口卸载，不清理插件私有数据' };
+  }
+  async previewRemoval(recordId: string): Promise<Plan> {
+    if (this.busy || this.disposed) throw new Error('Mojobox is busy or disposed');
+    this.busy = true;
+    this.plan = undefined;
+    try {
+      const record = this.records.find(item => item.id === recordId && !item.removedAt);
+      if (!record) throw new Error('Active pack record not found');
+      const bundles = await this.manager.listBundles();
+      return this.plan = { id: randomUUID(), operation: 'remove', recordId, pack: record.pack, source: record.source, hostVersion: this.hostVersion,
+        items: record.pack.manifest.plugins.map(plugin => this.removalItem(plugin.ref, bundles, record.pack.manifest.id)), selected: [] };
+    } finally { this.busy = false; }
+  }
   async replan(recordId: string, failedOnly: boolean): Promise<Plan> {
     const record = this.records.find(item => item.id === recordId);
     if (!record) throw new Error('Task record not found');
+    if (record.operation === 'remove' && !record.removedAt) return this.previewRemoval(recordId);
     return this.buildPlan(async () => record.pack, failedOnly ? record.items.filter(item => ['failed', 'unconfirmed', 'dependency-skipped'].includes(item.status)).map(item => item.ref) : undefined, record.source);
   }
   private async buildPlan(load: () => Promise<FeaturePack>, selectedRefs?: string[], source: TaskRecord['source'] = 'local'): Promise<Plan> {
@@ -192,7 +275,7 @@ export class PackManager {
       const pack = await load();
       const bundles = await this.manager.listBundles();
       const range = pack.manifest.requires?.dsh;
-      const blocked = !range ? '整包未声明内核兼容范围，无法安装' : !semver.satisfies(this.hostVersion, range) ? `整包要求内核 ${range}，当前为 ${this.hostVersion}` :
+      const blocked = !range ? '整包未声明内核兼容范围，无法安装' : !semver.satisfies(this.hostVersion, range, { includePrerelease: true }) ? `整包要求内核 ${range}，当前为 ${this.hostVersion}` :
         this.conflictReason(pack, bundles);
       const items: PlanItem[] = new Array(pack.manifest.plugins.length);
       let next = 0;
@@ -208,7 +291,7 @@ export class PackManager {
               this.targets.set(item.ref, target);
               item.requirements = target.requirements?.filter(requirement => pack.manifest.plugins.some(plugin => plugin.ref === requirement.ref));
             }
-            item.sharedTargets = this.records.filter(record => record.pack.manifest.id !== pack.manifest.id)
+            item.sharedTargets = this.records.filter(record => !record.removedAt && record.pack.manifest.id !== pack.manifest.id)
               .flatMap(record => record.pack.manifest.plugins.filter(other => other.ref === item.ref && other.version !== item.target).map(other => ({ id: record.pack.manifest.id, name: record.pack.manifest.name, version: other.version! })));
             items[index] = item;
           }
@@ -224,6 +307,7 @@ export class PackManager {
     if (this.busy || this.disposed) throw new Error('Mojobox is busy or disposed');
     const plan = this.plan;
     if (!plan || plan.id !== planId) throw new Error('Preview expired; import the pack again');
+    if (plan.operation === 'remove') return this.startRemoval(plan, selected);
     if (plan.blocked) throw new Error(plan.blocked);
     if (!Array.isArray(selected) || selected.some(ref => typeof ref !== 'string' || !plan.items.some(item => item.ref === ref && ['install', 'update'].includes(item.action))) || new Set(selected).size !== selected.length) throw new Error('Selection is not part of the executable preview');
     this.busy = true;
@@ -251,6 +335,66 @@ export class PackManager {
       task.items.filter(item => ['pending', 'running'].includes(item.status)).forEach(item => { item.status = 'unconfirmed'; item.reason = redact(String(error)); });
     }).finally(() => { this.busy = false; });
     return { taskId: task.id };
+  }
+  private async startRemoval(plan: Plan, selected: string[]): Promise<{ taskId: string }> {
+    if (!Array.isArray(selected) || selected.some(ref => typeof ref !== 'string' || !plan.items.some(item => item.ref === ref && item.action === 'remove')) || new Set(selected).size !== selected.length) throw new Error('Selection is not part of the removal preview');
+    const previous = this.records.find(record => record.id === plan.recordId && !record.removedAt);
+    if (!previous) throw new Error('Active pack record not found');
+    this.busy = true;
+    this.plan = undefined;
+    const task: TaskRecord = { ...previous, id: randomUUID(), operation: 'remove', selected: [...selected], startedAt: new Date().toISOString(), finishedAt: undefined, status: 'running',
+      items: plan.items.map(item => ({ ref: item.ref, target: item.current, status: 'pending', reason: '' })) };
+    this.task = task;
+    this.records = [task, ...this.records.filter(record => record !== previous)];
+    try { await this.store.write(this.records); }
+    catch (error) { this.records = this.records.map(record => record === task ? previous : record); this.task = undefined; this.busy = false; throw error; }
+    void this.executeRemoval(plan, task).catch(error => {
+      task.status = 'interrupted';
+      task.items.filter(item => ['pending', 'running'].includes(item.status)).forEach(item => { item.status = 'unconfirmed'; item.reason = redact(String(error)); });
+    }).finally(() => { this.busy = false; });
+    return { taskId: task.id };
+  }
+  private async executeRemoval(plan: Plan, task: TaskRecord) {
+    let stop = false;
+    for (const entry of plan.items) {
+      const row = task.items.find(item => item.ref === entry.ref)!;
+      if (!task.selected.includes(entry.ref)) {
+        row.status = 'retained'; row.reason = entry.reason || '用户保留组件';
+      } else if (stop || this.disposed) {
+        row.status = 'unconfirmed'; row.reason = '宿主状态待核对，已暂停后续卸载';
+      } else {
+        row.status = 'running'; row.reason = '正在通过官方接口卸载';
+        await this.store.write(this.records);
+        try {
+          const bundles = await this.manager.listBundles();
+          const current = this.removalItem(entry.ref, bundles, plan.pack.manifest.id);
+          if (current.action !== 'remove' || current.current !== entry.current || current.source !== entry.source || current.enabled !== entry.enabled) {
+            row.status = 'failed'; row.reason = '当前状态已变化，请重新预览；' + current.reason;
+          } else {
+            const before = await this.fingerprint();
+            const result = await this.manager.removeBundle!(entry.ref);
+            row.result = safeResult(result);
+            const after = await this.manager.listBundles();
+            const remaining = after.find(item => item.name === entry.ref && (item.installed || item.availability !== 'missing'));
+            if (result.error || !['applied', 'restart-required'].includes(result.application)) {
+              const restored = !!remaining && remaining.version === current.current && remaining.source === current.source && remaining.enabled === current.enabled && !remaining.error && await this.fingerprint() === before;
+              row.status = restored ? 'failed' : 'unconfirmed'; row.reason = '卸载未完成：' + failureReason(result); stop = !restored;
+            } else if (remaining) {
+              row.status = 'unconfirmed'; row.reason = '卸载返回成功，但组件仍在库存中，需核对'; stop = true;
+            } else {
+              row.status = 'removed'; row.reason = '已通过官方接口卸载；插件私有数据保留';
+              if (result.application === 'restart-required') row.activation = 'restart-required';
+              if (task.artifacts) delete task.artifacts[entry.ref];
+            }
+          }
+        } catch (error) { row.status = 'unconfirmed'; row.reason = redact(String(error)); stop = true; }
+      }
+      await this.store.write(this.records);
+    }
+    task.finishedAt = new Date().toISOString();
+    task.status = task.items.some(item => item.status === 'unconfirmed') ? 'interrupted' : task.items.some(item => item.status === 'failed') ? 'partial' : 'complete';
+    if (task.status === 'complete') task.removedAt = task.finishedAt;
+    await this.store.write(this.records);
   }
   private async execute(plan: Plan, task: TaskRecord) {
     let stop = false;
