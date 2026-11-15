@@ -3,7 +3,7 @@
 <p align="center">在官方 DeepSeek Harness 客户端中发现、安装、更新 Mojobox 整合包并管理单个组件。</p>
 
 <p align="center">
-  <a href="https://lanyun077.github.io/EAC-mojobox/#/packs">浏览整合包</a> ·
+  <a href="https://mojobox.cn/#/packs">浏览整合包</a> ·
   <a href="#从这里开始">从这里开始</a> ·
   <a href="#开发与验证">参与开发</a> ·
   <a href="docs/architecture.md">架构说明</a> ·
@@ -23,7 +23,7 @@ Mojobox Installer 是 [Mojobox](https://github.com/lanyun077/EAC-mojobox) 面向
 
 | 你想做什么 | 最短路径 |
 | --- | --- |
-| 找插件或整合包 | [浏览 Mojobox 网站](https://lanyun077.github.io/EAC-mojobox/)，查看来源与兼容说明 |
+| 找插件或整合包 | [浏览 Mojobox 网站](https://mojobox.cn/)，查看来源与兼容说明 |
 | 了解安装与更新流程 | 阅读下方[使用流程](#使用流程)及[兼容与限制](docs/compatibility.md) |
 | 开发或验证安装器 | [构建源码](#开发与验证) → 运行测试 → 使用独立 Profile 联调 |
 | 查看代码分工与协议边界 | [架构说明](docs/architecture.md)、[文档索引](docs/README.md) |
@@ -56,6 +56,10 @@ Mojobox Installer 是 [Mojobox](https://github.com/lanyun077/EAC-mojobox) 面向
 6. 在「管理」搜索单个组件，紧凑卡片显示名称、版本和可展开的简短简介；空间足够时双列展示。用滑块开关启用或暂停，操作完成并核对宿主库存后更新开关。受保护组件默认折叠，搜索可展开查看限制原因。删除确认在对应组件下方列出受影响的整合包，取消或按 Escape 返回。删除后保留整合包历史，「已安装」区分当前缺项与上次安装结果；可重新预览安装补回。
 
 安装记录、目录缓存、更新产物与日志保存在当前 Profile 的 `.mojobox-manager/`，详见[数据目录](docs/architecture.md#数据目录)。
+
+目录入口为 `https://mojobox.cn/generated/catalog.json`，无需网站登录。新版目录可将整合包指向主仓 GitHub Releases；
+安装器仅接受与包 ID、版本匹配的附件地址，并限次跟随 GitHub 附件 CDN 重定向，下载后仍检查大小、SHA-256 和包内声明。
+旧 GitHub Pages 下载链接保持兼容。此源码变更须构建并更新安装器后生效，线上新目录与真实官版联调仍需独立验收。
 该目录不是完整 Profile 备份；需要恢复测试初态时，应在客户端退出后还原测试前的整个独立 Profile。
 
 ## 安装与更新原则

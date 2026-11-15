@@ -118,9 +118,11 @@ flowchart TD
   [Mojobox 主仓库](https://github.com/lanyun077/EAC-mojobox/blob/main/docs/intake.md)为权威来源。
 - Schema 副本来源见 [schema/README.md](../schema/README.md)。历史 `x-eac` 字段和 Schema 标识是数据协议遗留，
   不引入 EAC 客户端或运行时依赖，不在此仓库自行修改上游字段。
-- 当前远端入口为 `https://lanyun077.github.io/EAC-mojobox/generated/catalog.json`，
+- 当前源码远端入口为 `https://mojobox.cn/generated/catalog.json`，
   接受 `catalog.mojobox.dev/v1alpha1`、`mode: intake`、`demo: false`。
-  下载仅限同站部署根的 `generated/downloads/`，核对大小、SHA-256、包身份与组件声明。
+  下载接受同站部署根的 `generated/downloads/`、历史 GitHub Pages 原始地址，以及主仓
+  GitHub Releases 中与包 ID、版本严格绑定的附件。仅 Release 附件允许跳转到
+  `release-assets.githubusercontent.com`，不转发凭据；核对大小、SHA-256、包身份与组件声明。
 - 同 ID、同版本的已核验摘要不允许悄悄变化；远端移除条目不删除本地组件。
 - 注册表来自官方服务当前配置；更新产物要求 HTTPS 和 SHA-512，不跳转来源或回落到公共注册表。
   HTTP 仅限本机回环测试。

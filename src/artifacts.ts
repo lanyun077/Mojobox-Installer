@@ -32,7 +32,21 @@ function trustedUrl(value: string): URL {
 }
 
 export async function download(url: string, limit: number): Promise<Buffer> {
-  const response = await fetch(trustedUrl(url), { redirect: 'error', signal: AbortSignal.timeout(60000) });
+  let target = trustedUrl(url);
+  const release = target.origin === 'https://github.com' && /^\/lanyun077\/EAC-mojobox\/releases\/download\/[^/]+\/[^/]+\.dshpack$/.test(target.pathname) && !target.search;
+  const signal = AbortSignal.timeout(60000);
+  let response: Response | undefined;
+  for (let hop = 0; hop <= 3; hop++) {
+    response = await fetch(target, { redirect: release ? 'manual' : 'error', signal });
+    if (!release || ![301, 302, 303, 307, 308].includes(response.status)) break;
+    await response.body?.cancel();
+    const location = response.headers.get('location');
+    if (!location) throw new Error('Missing release redirect location');
+    const next = trustedUrl(new URL(location, target).href);
+    if (next.origin !== 'https://release-assets.githubusercontent.com' || hop === 3) throw new Error('Untrusted or excessive release redirect');
+    target = next;
+  }
+  if (!response) throw new Error('Artifact request did not return a response');
   if (!response.ok) throw new Error(`Artifact request failed: HTTP ${response.status}`);
   const encoding = response.headers.get('content-encoding')?.trim().toLowerCase();
   if ((!encoding || encoding === 'identity') && Number(response.headers.get('content-length')) > limit) { await response.body?.cancel(); throw new Error('Artifact response exceeds size limit'); }
