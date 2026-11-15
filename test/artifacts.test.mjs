@@ -90,6 +90,28 @@ test('HTTP compression uses decoded artifact size and still rejects oversized de
   await assert.rejects(download(url, bytes.length - 1), /size limit/);
 });
 
+test('official release redirects are bounded to GitHub asset CDN while ordinary redirects remain rejected', async t => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const url = 'https://github.com/lanyun077/EAC-mojobox/releases/download/pack-test-v1.0.0/test-1.0.0.dshpack';
+  const calls = [];
+  globalThis.fetch = async (target, options) => {
+    calls.push({ target: String(target), options });
+    return calls.length === 1 ? new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/asset?sig=signed' } }) : new Response('pack');
+  };
+  assert.deepEqual(await download(url, 4), Buffer.from('pack'));
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => !call.options.headers));
+  for (const location of ['https://evil.example/asset', 'http://127.0.0.1/asset', 'https://name:secret@release-assets.githubusercontent.com/asset', 'https://release-assets.githubusercontent.com.evil.example/asset']) {
+    globalThis.fetch = async () => new Response(null, { status: 302, headers: { location } });
+    await assert.rejects(download(url, 100), /HTTPS|Untrusted/);
+  }
+  globalThis.fetch = async () => new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/loop' } });
+  await assert.rejects(download(url, 100), /excessive/);
+  globalThis.fetch = async () => new Response('too large');
+  await assert.rejects(download(url, 1), /size limit/);
+});
+
 test('plugin engines accept prerelease hosts using official includePrerelease semantics', async t => {
   const env = await fixture(t);
   let range = '>=0.1.0';

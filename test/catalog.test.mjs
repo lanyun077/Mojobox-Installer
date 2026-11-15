@@ -37,9 +37,9 @@ const request = (route, body) => new Request(`http://local/api/mojobox/${route}`
 
 test('catalog validates production protocol, consumed fields and official subpath URLs', async t => {
   const { state, entry } = await setup(t);
-  assert.equal(parseCatalog(state.document)[0].archiveUrl, 'https://lanyun077.github.io/EAC-mojobox/generated/downloads/test.dshpack');
+  assert.equal(parseCatalog(state.document)[0].archiveUrl, 'https://mojobox.cn/generated/downloads/test.dshpack');
   for (const patch of [{ demo: true }, { mode: 'demo' }, { apiVersion: 'next' }, { packs: [entry, entry] }]) assert.throws(() => parseCatalog({ ...state.document, ...patch }));
-  for (const patch of [{ archiveUrl: 'https://evil.example/a' }, { archiveUrl: '../downloads/a' }, { archiveUrl: '/generated/downloads/a' }, { archiveUrl: 'generated/downloads/a?token=secret' }, { archiveSize: 2097153 }, { archiveDigest: 'sha256:bad' }, { components: [{ ref: 'a', version: '^1' }] }, { requires: { dsh: '||' } }]) assert.throws(() => parseCatalog({ ...state.document, packs: [{ ...entry, ...patch }] }));
+  for (const patch of [{ archiveUrl: 'https://evil.example/a' }, { archiveUrl: '../downloads/a' }, { archiveUrl: '/downloads/a' }, { archiveUrl: 'generated/downloads/a?token=secret' }, { archiveSize: 2097153 }, { archiveDigest: 'sha256:bad' }, { components: [{ ref: 'a', version: '^1' }] }, { requires: { dsh: '||' } }]) assert.throws(() => parseCatalog({ ...state.document, packs: [{ ...entry, ...patch }] }));
 });
 
 test('catalog accepts underscore npm scopes while rejecting executable and path references', async t => {
@@ -48,6 +48,19 @@ test('catalog accepts underscore npm scopes while rejecting executable and path 
   for (const ref of ['@scope/pkg/extra', '@scope/../pkg', 'file:pkg', 'https://example.org/pkg', '@scope/pkg;cmd']) {
     assert.throws(() => parseCatalog({ ...state.document, packs: [{ ...entry, components: [{ ref, version: '1.0.0' }] }] }));
   }
+});
+
+test('catalog binds Releases to the selected pack identity and preserves old Pages download links', async t => {
+  const { state, entry } = await setup(t);
+  const url = 'https://github.com/lanyun077/EAC-mojobox/releases/download/pack-remote-test-v1.1.0/remote-test-1.1.0.dshpack';
+  entry.archiveUrl = url;
+  assert.equal(parseCatalog(state.document)[0].archiveUrl, url);
+  for (const invalid of [url.replace('lanyun077/', 'other/'), url.replace('pack-remote-test', 'pack-other'), url.replace('/remote-test-1.1.0.dshpack', '/other.dshpack'), `${url}?token=secret`, url.replace('https:', 'http:')]) {
+    entry.archiveUrl = invalid;
+    assert.throws(() => parseCatalog(state.document), /outside/);
+  }
+  entry.archiveUrl = 'https://lanyun077.github.io/EAC-mojobox/generated/downloads/test.dshpack';
+  assert.equal(parseCatalog(state.document)[0].archiveUrl, entry.archiveUrl);
 });
 test('valid cache survives offline restart but cannot install until a successful refresh', async t => {
   const { catalog, state, file, transport } = await setup(t);
@@ -135,7 +148,7 @@ test('remote and local previews share selective executor; records retain source 
   const status = await coordinator.status(); assert.equal(status.task.status, 'complete'); assert.equal(status.task.source, 'catalog'); assert.deepEqual(calls, ['dsh-plugin-a@1.0.0']);
   const retry = await coordinator.replan(status.task.id, true); assert.equal(retry.source, 'catalog'); assert.deepEqual(retry.selected, []);
   const local = await coordinator.preview(state.bytes); assert.equal(local.source, 'local'); assert.equal(local.items[0].action, 'reuse');
-  assert.ok(state.requests.every(item => item.url.startsWith('https://lanyun077.github.io/EAC-mojobox/')));
+  assert.ok(state.requests.every(item => item.url.startsWith('https://mojobox.cn/')));
   assert.equal(JSON.parse(await readFile(join(directory, 'records.json'), 'utf8'))[0].source, 'catalog');
   state.offline = true; await catalog.refresh();
   const offlineLocal = await coordinator.preview(state.bytes); assert.equal(offlineLocal.items[0].action, 'reuse');

@@ -8,8 +8,9 @@ import type { PackManifest } from './feature-pack.js';
 import type { TaskRecord } from './manager.js';
 import { redact } from './manager.js';
 
-export const CATALOG_URL = 'https://lanyun077.github.io/EAC-mojobox/generated/catalog.json';
+export const CATALOG_URL = 'https://mojobox.cn/generated/catalog.json';
 const SITE_ROOT = new URL('../', CATALOG_URL);
+const LEGACY_ROOT = new URL('https://lanyun077.github.io/EAC-mojobox/');
 export interface CatalogEntry {
   id: string; version: string; name: string; description: string; author: string;
   requires?: string; components: PackManifest['plugins']; archiveUrl: string; archiveSize: number; archiveDigest: string;
@@ -19,10 +20,12 @@ export interface CatalogView {
   checkedAt?: string; stale: boolean; error?: string;
   entries: (CatalogEntry & { blocked?: string; installedVersion?: string; newer: boolean })[];
 }
-function archiveUrl(value: unknown): string {
+function archiveUrl(value: unknown, id: string, version: string): string {
   if (typeof value !== 'string') throw new Error('Catalog archive URL is missing');
   const url = new URL(value, SITE_ROOT);
-  if (url.origin !== SITE_ROOT.origin || !url.pathname.startsWith(`${SITE_ROOT.pathname}generated/downloads/`) || url.username || url.password || url.search || url.hash || /%2f|%5c/i.test(url.pathname)) throw new Error('Catalog archive URL is outside the official download directory');
+  const release = `https://github.com/lanyun077/EAC-mojobox/releases/download/${encodeURIComponent(`pack-${id}-v${version}`)}/${encodeURIComponent(`${id}-${version}.dshpack`)}`;
+  const local = [SITE_ROOT, LEGACY_ROOT].some(root => url.origin === root.origin && url.pathname.startsWith(`${root.pathname}generated/downloads/`));
+  if ((!local && url.href !== release) || url.username || url.password || url.search || url.hash || /%2f|%5c/i.test(url.pathname)) throw new Error('Catalog archive URL is outside the official download directory or pack release');
   return url.href;
 }
 export function parseCatalog(value: any): CatalogEntry[] {
@@ -40,7 +43,7 @@ export function parseCatalog(value: any): CatalogEntry[] {
       return { ref: plugin.ref, version: plugin.version, enabled: plugin.enabled };
     });
     if (!components.length) throw new Error('Catalog function pack has no components');
-    return { id: m.id, version: m.version, name: m.name, description: m.description, author: item.author, requires: range, components, archiveUrl: archiveUrl(item.archiveUrl), archiveSize: item.archiveSize, archiveDigest: item.archiveDigest };
+    return { id: m.id, version: m.version, name: m.name, description: m.description, author: item.author, requires: range, components, archiveUrl: archiveUrl(item.archiveUrl, m.id, m.version), archiveSize: item.archiveSize, archiveDigest: item.archiveDigest };
   });
 }
 
