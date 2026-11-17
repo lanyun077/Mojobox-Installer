@@ -1,6 +1,6 @@
 import type { Bundle, RuntimeEntry, ManagedComponent, ComponentAction, ComponentOperation } from './contracts.js';
 import type { Plan, TaskRecord } from './manager.js';
-import type { CatalogView } from './catalog.js';
+import type { CatalogEntry, CatalogView } from './catalog.js';
 
 declare const require: (id: string) => any;
 declare const exports: { apply: typeof apply; inject: string[] };
@@ -75,12 +75,24 @@ const styles = `
 .mojobox .mojobox-protected { margin-top: 16px; color: var(--mb-secondary); }
 .mojobox .mojobox-protected > summary { font-size: 13px; }
 .mojobox .mojobox-pack-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(min(100%,208px),1fr)); gap: 8px; margin-top: 12px; }
-.mojobox .mojobox-pack { flex-direction: column; align-items: stretch; justify-content: flex-start; text-align: left; min-width: 0; padding: 12px; border: 1px solid var(--mb-border); border-radius: 12px; font: inherit; color: inherit; background: var(--mb-surface); cursor: pointer; overflow-wrap: anywhere; }
-.mojobox .mojobox-pack-title { display: flex; align-items: baseline; gap: 8px; justify-content: space-between; font-weight: 500; }
-.mojobox .mojobox-pack-title > :first-child { min-width: 0; }
-.mojobox .mojobox-pack-title .mojobox-meta { flex: 0 1 auto; min-width: 0; max-width: 40%; margin: 0; text-align: right; font-weight: 400; font-variant-numeric: tabular-nums; }
-.mojobox .mojobox-pack p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin: 0; font-size: 12px; color: var(--mb-secondary); }
-.mojobox .mojobox-pack > .mojobox-meta { margin-top: auto; }
+.mojobox .mojobox-pack { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--mb-border); border-radius: 12px; background: var(--mb-surface); }
+.mojobox .mojobox-pack-header { display: flex; align-items: flex-start; gap: 8px; justify-content: space-between; }
+.mojobox .mojobox-pack-title { min-width: 0; margin: 0; font-size: 13px; font-weight: 500; }
+.mojobox .mojobox-pack-title a { display: inline-flex; align-items: flex-start; gap: 4px; color: inherit; text-decoration: none; }
+.mojobox .mojobox-pack-title a > span { min-width: 0; }
+.mojobox .mojobox-pack-title a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.mojobox .mojobox-pack-title svg { flex: none; margin-top: 2px; color: var(--mb-secondary); }
+.mojobox .mojobox-pack-header > button { flex: none; min-height: 28px; padding: 2px 12px; font-size: 12px; }
+.mojobox .mojobox-pack-byline { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: var(--mb-secondary); font-size: 12px; }
+.mojobox .mojobox-pack-byline a { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: inherit; text-decoration: none; }
+.mojobox .mojobox-pack-byline a:hover { color: var(--mb-text); text-decoration: underline; }
+.mojobox .mojobox-avatar { display: inline-flex; align-items: center; justify-content: center; flex: none; position: relative; width: 16px; height: 16px; border-radius: 4px; overflow: hidden; background: var(--mb-subtle); font-size: 11px; }
+.mojobox .mojobox-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mojobox .mojobox-pack-stats { display: flex; flex-wrap: wrap; gap: 12px; color: var(--mb-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mojobox .mojobox-pack-stats span { display: inline-flex; align-items: center; gap: 4px; }
+.mojobox .mojobox-pack-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin: 0; font-size: 12px; color: var(--mb-secondary); }
+.mojobox .mojobox-pack-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; color: var(--mb-secondary); font-size: 12px; }
+.mojobox .mojobox-pack-footer button { min-height: 28px; padding: 2px 4px; border-color: transparent; font-size: 12px; }
 .mojobox .mojobox-empty { padding: 24px 16px; text-align: center; color: var(--mb-secondary); }
 .mojobox .mojobox-toolbar { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; }
 .mojobox .mojobox-toolbar h3 { margin: 0; font-size: 14px; }
@@ -98,6 +110,9 @@ const styles = `
 @media (prefers-reduced-motion: reduce) { .mojobox .mojobox-switch, .mojobox .mojobox-switch-knob { transition: none; } }
 `;
 const refreshIcon = () => h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true }, h('path', { d: 'M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 11-1l3 6M4 12l3 6a7 7 0 0 0 11-1' }));
+
+const marketIcon = (kind: 'source' | 'download' | 'heat') => h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true }, h('path', { d: { source: 'M15 3h6v6M21 3l-9 9M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4', download: 'M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5', heat: 'M3 17l6-6 4 4 8-10M15 5h6v6' }[kind] }));
+const formatCount = (value: number | null | undefined) => value == null ? '待统计' : value >= 1000 ? `${Number((value / 1000).toFixed(1))}k` : String(value);
 
 function apply(ctx: ClientContext) {
   let state = { snapshot: null as Snapshot | null, plan: null as Plan | null, selected: [] as string[], working: false, pending: '', componentPending: '', operationRecord: '', retrying: false, submittedTaskId: '', savingLog: false, savedLogPath: '', catalogWorking: false, refreshing: false, notice: '', error: '', connectionError: '', view: 'import' };
@@ -262,7 +277,7 @@ function apply(ctx: ClientContext) {
       for (const entry of view.snapshot?.runtime ?? []) { const rows = runtime.get(entry.moduleName) ?? []; rows.push(entry); runtime.set(entry.moduleName, rows); }
       return { bundles, runtime };
     }, [view.snapshot?.bundles, view.snapshot?.runtime]) as { bundles: Map<string, Bundle>; runtime: Map<string, RuntimeEntry[]> };
-    const report = () => JSON.stringify({ version: '0.0.1-p3.0', hostVersion: view.snapshot?.hostVersion, task: view.snapshot?.task, records: view.snapshot?.records, componentOperation: view.snapshot?.componentOperation, catalog, pending: view.pending, error: view.error, connectionError: view.connectionError }, null, 2);
+    const report = () => JSON.stringify({ version: '0.0.1-p3.1', hostVersion: view.snapshot?.hostVersion, task: view.snapshot?.task, records: view.snapshot?.records, componentOperation: view.snapshot?.componentOperation, catalog, pending: view.pending, error: view.error, connectionError: view.connectionError }, null, 2);
     const saveLog = async (task?: TaskRecord) => {
       if (state.savingLog) return;
       publish({ savingLog: true, savedLogPath: '', notice: '正在保存日志…' });
@@ -276,6 +291,17 @@ function apply(ctx: ClientContext) {
     const removing = view.plan?.operation === 'remove';
     const startBlocked = view.plan?.blocked || (busy ? '请等待当前操作完成' : !removing && !view.selected.length && !view.plan?.items.some(item => item.action === 'reuse') ? '请选择至少一个可安装或更新的组件' : '');
     const previewBlocked = busy ? '请等待当前操作完成' : view.catalogWorking ? '正在检查远端目录' : detail?.blocked || (catalog?.stale ? '请先刷新远端目录' : '');
+    const packTitle = (entry: CatalogEntry) => entry.source
+      ? h('a', { href: entry.source, target: '_blank', rel: 'noopener noreferrer', title: '查看原仓库' }, h('span', null, entry.name), marketIcon('source'))
+      : entry.name;
+    const packIdentity = (entry: CatalogEntry) => h('div', { className: 'mojobox-pack-byline' },
+      entry.submitter ? h('a', { href: `https://github.com/${entry.submitter.login}`, target: '_blank', rel: 'noopener noreferrer', title: '首次投稿者' },
+        h('span', { className: 'mojobox-avatar', 'aria-hidden': true }, entry.submitter.login[0].toUpperCase(), h('img', { src: `https://avatars.githubusercontent.com/u/${entry.submitter.userId}?s=32`, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer', onError: (event: { currentTarget: HTMLImageElement }) => { event.currentTarget.hidden = true; } })), entry.submitter.login)
+        : h('span', null, '投稿者未记录'), h('span', null, `· v${entry.version}`));
+    const packStats = (entry: CatalogEntry) => h('div', { className: 'mojobox-pack-stats' },
+      h('span', { title: 'GitHub Release 附件累计下载次数，含重复下载与自动校验' }, marketIcon('download'), `下载 ${formatCount(entry.downloadsAll)}`),
+      h('span', { title: '热度按近 7 日下载次数计算；数据不足时不记为零' }, marketIcon('heat'), `热度 ${formatCount(entry.downloads7d)}`),
+      (entry.statisticsStale || (catalog?.stale && entry.statisticsAt)) && h('span', { title: entry.statisticsAt ? `统计时间 ${new Date(entry.statisticsAt).toLocaleString()}` : '暂无统计时间' }, '统计待刷新'));
     const chooseAll = (checked: boolean) => publish({ selected: checked ? (view.plan?.items.filter(item => ['install', 'update'].includes(item.action)).map(item => item.ref) ?? []) : [] });
     const filteredComponents = (view.snapshot?.components ?? []).filter(component => `${component.name} ${component.description ?? ''} ${component.packs.join(' ')}`.toLowerCase().includes(componentQuery.trim().toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));
     const protectedComponent = (component: ManagedComponent) => !!component.toggleReason && !!component.deleteReason;
@@ -331,24 +357,33 @@ function apply(ctx: ClientContext) {
           h('button', { style: button, disabled: view.catalogWorking || busy, title: '检查远端目录和新版', 'aria-label': '检查远端目录和新版', onClick: refreshCatalog }, refreshIcon(), view.catalogWorking ? '检查中…' : '检查更新')),
         h('p', { role: 'status', style: { color: 'var(--mb-secondary)', fontSize: 12 } }, `${catalog?.stale ? '缓存快照，需刷新后安装' : catalog ? '已核对远端目录' : '尚无目录'} · 上次成功检查 ${catalog?.checkedAt ? new Date(catalog.checkedAt).toLocaleString() : '暂无'}`),
         catalog?.error && h('p', { role: 'alert', style: { overflowWrap: 'anywhere' } }, `目录不可用：${catalog.error}`),
+        h('p', { className: 'mojobox-meta', role: 'status' }, catalog?.metadataLoading ? '正在补充投稿者和下载统计…' : catalog?.metadataError || '下载量为 GitHub 附件下载次数 · 热度为近 7 日下载量'),
         !catalog?.entries.length && h('p', null, '暂无可展示的整合包；仍可从文件导入'),
         detail ? h('div', null,
           h('button', { style: button, onClick: () => setDetailId('') }, '返回目录'),
           h('article', { style: card },
-            h('h3', { ref: detailTitle, tabIndex: -1, style: { marginTop: 0, overflowWrap: 'anywhere' } }, `${detail.name} · ${detail.version}${detail.newer ? ' · 有新版' : ''}`),
+            h('h3', { ref: detailTitle, tabIndex: -1, style: { marginTop: 0, overflowWrap: 'anywhere' } }, packTitle(detail), detail.newer ? ' · 有新版' : ''),
+            packIdentity(detail), packStats(detail),
             h('p', null, detail.description),
             h('p', { style: { color: 'var(--mb-secondary)', fontSize: 12 } }, `${detail.author} · 内核 ${detail.requires ?? '未声明'} · ${detail.components.length} 个组件 · ${detail.archiveSize.toLocaleString()} B`),
             detail.installedVersion && h('p', { style: { fontSize: 12 } }, `本地记录目标 ${detail.installedVersion}`),
             detail.blocked && h('p', null, detail.blocked),
+            detail.warning && h('p', { role: 'note', className: 'mojobox-meta' }, detail.warning),
             h('details', null, h('summary', { style: { cursor: 'pointer' } }, '包含组件'), ...detail.components.map(plugin => h('div', { key: plugin.ref, style: { fontSize: 12, overflowWrap: 'anywhere', padding: '4px 0' } }, `${plugin.ref} · ${plugin.version ?? '内置版本'}`))),
             h('button', { style: { ...button, marginTop: 12 }, disabled: !!previewBlocked, title: previewBlocked || '下载校验并选择组件', 'aria-label': `预览 ${detail.name}`, onClick: () => previewRemote(detail.id, detail.version) }, view.working ? '正在准备安装…' : '预览安装'),
             previewBlocked && h('p', { style: { fontSize: 12 } }, previewBlocked)))
           : h('div', { ref: packGrid, 'aria-label': '整合包目录', className: 'mojobox-pack-grid' },
-            ...(catalog?.entries ?? []).map(entry => h('button', { key: entry.id, type: 'button', className: 'mojobox-pack', 'aria-label': entry.name, 'data-pack-id': entry.id, title: entry.name,
-              onClick: () => { lastOpened.current = entry.id; setDetailId(entry.id); }
-            }, h('span', { className: 'mojobox-pack-title' }, h('span', null, entry.name), h('span', { className: 'mojobox-meta' }, entry.version)),
-            h('p', null, entry.description), h('span', { className: 'mojobox-meta' }, `${entry.components.length} 个组件 · ${entry.author}`),
-            (entry.newer || entry.installedVersion || entry.blocked) && h('span', { className: 'mojobox-meta' }, entry.blocked || (entry.newer ? '有新版' : `本地目标 ${entry.installedVersion}`)))))),
+            ...(catalog?.entries ?? []).map(entry => {
+              const blocked = busy ? '请等待当前操作完成' : view.catalogWorking ? '正在检查远端目录' : entry.blocked || (catalog?.stale ? '请先刷新远端目录' : '');
+              return h('article', { key: entry.id, className: 'mojobox-pack' },
+                h('div', { className: 'mojobox-pack-header' }, h('h4', { className: 'mojobox-pack-title' }, packTitle(entry)),
+                  h('button', { type: 'button', disabled: !!blocked, title: blocked || '下载校验并选择组件', 'aria-label': `安装 ${entry.name}`, onClick: () => previewRemote(entry.id, entry.version) }, entry.newer ? '更新' : '安装')),
+                packIdentity(entry), packStats(entry), h('p', { className: 'mojobox-pack-description' }, entry.description),
+                (entry.newer || entry.installedVersion || entry.blocked) && h('span', { className: 'mojobox-meta' }, entry.blocked || (entry.newer ? '有新版' : `本地目标 ${entry.installedVersion}`)),
+                entry.warning && h('span', { className: 'mojobox-meta', title: entry.warning }, '内核版本待核验'),
+                h('div', { className: 'mojobox-pack-footer' }, h('span', null, `${entry.components.length} 个组件`),
+                  h('button', { type: 'button', 'aria-label': entry.name, 'data-pack-id': entry.id, onClick: () => { lastOpened.current = entry.id; setDetailId(entry.id); } }, '详情')));
+            }))),
       view.view === 'import' && h('div', null,
         !view.plan && h('div', { className: 'mojobox-dropzone', role: 'region', 'aria-label': '拖拽安装整合包', 'aria-disabled': !!busy,
           onDragOver: (event: DragEvent) => event.preventDefault(),
@@ -366,11 +401,13 @@ function apply(ctx: ClientContext) {
           removing && h('div', { role: 'note' }, h('h4', { style: { margin: '12px 0 8px' } }, '移除整合包'), h('p', null, '默认只移除管理记录，保留所有组件。仅勾选你要卸载的插件；它们也可能在导入整合包前就已存在。其他整合包共用的组件会保留。插件私有数据不清理。')),
           h('p', { style: { color: 'var(--mb-secondary)' } }, `${view.plan.source === 'catalog' ? 'Mojobox 远端目录' : '本地导入'} · ${view.plan.pack.manifest.author ?? '作者未声明'} · 内核 ${view.plan.pack.manifest.requires?.dsh ?? '未知'}`),
           view.plan.blocked && h('p', { role: 'alert' }, view.plan.blocked),
+          view.plan.warning && h('p', { role: 'note' }, view.plan.warning),
           view.plan.items.some(item => item.action === 'update') && h('p', { role: 'status' }, '检测到插件版本过低，是否更新？请勾选要更新的插件，或跳过。'),
           !removing && h('div', { className: 'mojobox-actions' }, h('button', { style: button, disabled: busy, onClick: () => chooseAll(true) }, '全选安装 / 更新项'), h('button', { style: button, disabled: busy, onClick: () => chooseAll(false) }, '跳过全部')),
           ...view.plan.items.map(item => h('div', { key: item.ref, style: { borderBottom: '1px solid var(--mb-border)', padding: '12px 0', overflowWrap: 'anywhere' } },
             h('label', null, h('input', { type: 'checkbox', 'aria-label': `选择 ${item.ref}`, checked: view.selected.includes(item.ref), disabled: busy || !(removing ? ['remove'] : ['install', 'update']).includes(item.action), onChange: (event: { target: HTMLInputElement }) => publish({ selected: event.target.checked ? [...view.selected, item.ref] : view.selected.filter(ref => ref !== item.ref) }) }), ` ${item.ref}`),
             h('div', null, removing ? `${item.current ?? '未安装'} · ${actionLabels[item.action]}` : `${item.current ?? '未安装'} → ${item.target ?? '未声明'} · ${actionLabels[item.action]}`), h('small', { style: { color: 'var(--mb-secondary)' } }, item.reason),
+            item.warning && h('p', { role: 'note', className: 'mojobox-meta' }, item.warning),
             !!item.sharedTargets?.length && h('p', { style: { fontSize: 12 } }, `共享组件：${item.sharedTargets.map(other => `${other.name} 的目标为 ${other.version}`).join('；')}。变更后这些整合包可能与目标不同。`))),
           h('button', { style: { ...button, marginTop: 16 }, disabled: !!startBlocked, onClick: start, title: startBlocked || '执行所选组件' }, view.working ? '正在处理…' : removing ? view.selected.length ? `确认移除并卸载 ${view.selected.length} 个组件` : '仅移除管理记录' : view.selected.length ? `执行所选（${view.selected.length}）` : '核对已安装组件'),
           removing && h('button', { style: { ...button, marginLeft: 8 }, disabled: busy, onClick: () => publish({ plan: null, selected: [], view: 'installed' }) }, '取消移除'),

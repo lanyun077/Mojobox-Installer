@@ -112,7 +112,7 @@ test('official release redirects are bounded to GitHub asset CDN while ordinary 
   await assert.rejects(download(url, 1), /size limit/);
 });
 
-test('plugin engines accept prerelease hosts using official includePrerelease semantics', async t => {
+test('plugin engine differences become warnings and malformed declarations remain rejected', async t => {
   const env = await fixture(t);
   let range = '>=0.1.0';
   const server = createServer((_request, response) => response.end(JSON.stringify({
@@ -124,6 +124,11 @@ test('plugin engines accept prerelease hosts using official includePrerelease se
   const registry = `http://127.0.0.1:${server.address().port}/`;
   const source = new RegistryArtifacts({ registries: async () => ({ resolved: registry }) }, join(env.directory, 'cache'), '0.2.2-rc.1');
   assert.equal((await source.describe('fixture', '1.1.0')).version, '1.1.0');
+  assert.equal((await source.describe('fixture', '1.1.0')).warning, undefined);
   range = '>=0.2.2';
-  await assert.rejects(source.describe('fixture', '1.1.0'), /current host/);
+  assert.match((await source.describe('fixture', '1.1.0')).warning, /逐项交由官版核验/);
+  range = undefined;
+  assert.match((await source.describe('fixture', '1.1.0')).warning, /未声明/);
+  range = 'not-semver';
+  await assert.rejects(source.describe('fixture', '1.1.0'), /Invalid plugin engines/);
 });

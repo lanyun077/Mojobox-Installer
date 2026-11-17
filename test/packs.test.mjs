@@ -7,6 +7,7 @@ import { ZipFile } from 'yazl';
 import { readFeaturePack } from '../lib/feature-pack.js';
 import { PackManager, RecordStore, redact, failureReason, safeResult } from '../lib/manager.js';
 import { createHandler, apply } from '../lib/index.js';
+import semver from 'semver';
 
 export const manifest = (plugins = [{ ref: 'dsh-plugin-a', version: '1.0.0' }], patch = {}) => ({ formatVersion: 1, id: 'test-pack', name: 'Test', version: '1.0.0', requires: { dsh: '0.2.2-rc.1' }, plugins, ...patch });
 export async function archive(value, entries = []) {
@@ -389,9 +390,45 @@ test('archive and manifest boundaries reject before installation', async () => {
   for (let offset = traversal.indexOf('pack.json'); offset !== -1; offset = traversal.indexOf('pack.json', offset + 9)) traversal.write('../x.json', offset);
   await assert.rejects(readFeaturePack(traversal));
 });
-test('incompatible and unknown kernel and unresolved conflicts never inspect or write', async t => {
+test('installer metadata accepts later 0.2 releases instead of pinning one prerelease', async () => {
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const lock = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  assert.equal(lock.packages[''].engines.dsh, pkg.engines.dsh);
+  assert.equal(lock.packages[''].version, pkg.version);
+  assert.equal(lock.version, pkg.version);
+  for (const host of ['0.2.2-rc.1', '0.2.2-rc.3', '0.2.2', '0.2.3-rc.1', '0.2.3']) assert.equal(semver.satisfies(host, pkg.engines.dsh, { includePrerelease: true }), true, host);
+  for (const host of ['0.2.1', '0.3.0-rc.1', '0.3.0', '1.0.0']) assert.equal(semver.satisfies(host, pkg.engines.dsh, { includePrerelease: true }), false, host);
+});
+
+test('pack kernel differences and absent declarations warn without preventing selective installation', async t => {
+  const env = await setup(t);
+  for (const patch of [{ requires: { dsh: '0.2.0-rc.2' } }, { requires: {} }]) {
+    const plan = await env.coordinator.preview(await archive(manifest(undefined, patch)));
+    assert.equal(plan.blocked, undefined); assert.match(plan.warning, /逐项交由官版核验/);
+    assert.notEqual(plan.items[0].action, 'unsupported');
+    await env.coordinator.start(plan.id, plan.selected);
+    assert.equal((await finish(env.coordinator)).status, 'complete');
+  }
+  assert.equal(env.calls.length, 1);
+});
+
+test('per-plugin kernel warnings preserve host refusal and continue independent components', async t => {
+  const env = await setup(t);
+  const install = env.manager.installBundle;
+  env.manager.installBundle = (spec, options) => spec.includes('dsh-plugin-a@') ? Promise.resolve({ application: 'failed', changed: false, error: { code: 'incompatible-version' } }) : install(spec, options);
+  env.artifacts.describe = async (name, version) => ({ name, version, sha512: 'a'.repeat(128), warning: '声明内核范围不同，将逐项交由官版核验' });
+  const plan = await env.coordinator.preview(await archive(manifest([{ ref: 'dsh-plugin-a', version: '1.0.0' }, { ref: 'dsh-plugin-b', version: '1.0.0' }])));
+  assert.equal(plan.items[0].action, 'install'); assert.match(plan.items[0].warning, /核验/);
+  await env.coordinator.start(plan.id, plan.selected);
+  const task = await finish(env.coordinator);
+  assert.deepEqual(task.items.map(item => item.status), ['failed', 'installed']);
+  assert.match(task.items[0].reason, /官版宿主拒绝/);
+  assert.equal(task.items[0].result.error.code, 'incompatible-version');
+});
+
+test('unresolved conflicts still prevent inspection and installation', async t => {
   const { coordinator } = await setup(t, { inspect: () => assert.fail('incompatible pack was inspected') });
-  for (const patch of [{ requires: { dsh: '0.2.0-rc.2' } }, { requires: {} }, { conflicts: ['bodyAttr:theme'] }]) {
+  for (const patch of [{ conflicts: ['bodyAttr:theme'] }]) {
     const plan = await coordinator.preview(await archive(manifest(undefined, patch)));
     assert.ok(plan.blocked);
     await assert.rejects(coordinator.start(plan.id, []));
