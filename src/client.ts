@@ -5,7 +5,6 @@ import type { CatalogEntry, CatalogView } from './catalog.js';
 declare const require: (id: string) => any;
 declare const exports: { apply: typeof apply; inject: string[] };
 interface ClientContext {
-  remoteAccess: { whenAccess(method: string, effect: () => unknown): void };
   slots: { inject(name: string, effect: () => unknown): unknown; register(options: unknown, component: unknown): unknown };
   effect(effect: () => unknown): void;
 }
@@ -483,7 +482,12 @@ function apply(ctx: ClientContext) {
         diagnosticsOpen && h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12, maxHeight: 360, overflow: 'auto' } }, report()))
     );
   }
-  ctx.remoteAccess.whenAccess('pluginManager/installBundle', () => ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: 'mojobox-manager', order: 80, label: () => 'Mojobox' }, Section)));
+  function AccessSection({ useRemoteAccess }: { useRemoteAccess(action: string): boolean }) {
+    return useRemoteAccess('pluginManager/installBundle')
+      ? h(Section)
+      : h('p', { role: 'status' }, '当前连接没有整合包管理权限，请使用本机客户端。');
+  }
+  ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: 'mojobox-manager', order: 80, label: () => 'Mojobox' }, AccessSection));
 }
 exports.apply = apply;
-exports.inject = ['slots', 'remoteAccess'];
+exports.inject = ['slots'];
