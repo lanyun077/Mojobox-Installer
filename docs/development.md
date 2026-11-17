@@ -18,10 +18,11 @@ git diff --check
 ```
 
 `npm test` 先构建，再运行 Node 内置测试。测试使用临时目录、模拟宿主和本机服务，不安装生产插件。
-单独构建用 `npm run build`；生成本地插件归档用 `npm pack --ignore-scripts`。`lib/` 是构建输出，不提交。
+单独构建用 `npm run build`；生成预构建发行包用 `npm run pack:release`，产物位于 `artifacts/`。`lib/` 是构建输出，不提交。
 
 CI 在 Windows 和 Linux 的 Node.js 24 上执行上述检查；Linux CI 通过不代表 Linux 官版客户端已适配。
 仓库保留 `private: true`，推送代码不会自动发布 npm 包或客户端版本。
+用户安装入口见[安装说明](installation.md)，发布包的制作与上传见[发行说明](releasing.md)。
 
 ## 仓库结构
 
@@ -74,7 +75,7 @@ CI 在 Windows 和 Linux 的 Node.js 24 上执行上述检查；Linux CI 通过�
 仅删除安装记录不能恢复配置，缓存产物也可能仍被已安装插件引用。
 
 测试组件、模拟注册表、官版接入和提交检查统一见[贡献指南](../CONTRIBUTING.md)。
-源码通过检查不代表发布或上线；真实安装器分发、升级流程和目标客户端仍需验收。
+源码通过检查不代表发布或上线；不同客户端与升级流程的验收范围见[兼容说明](compatibility.md)。
 
 ## 继续阅读
 

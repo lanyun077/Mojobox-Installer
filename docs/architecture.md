@@ -148,3 +148,4 @@ flowchart TD
 发行文件由 `package.json.files` 限定为 `lib/`、注册 patch、README 和 Schema，加上 npm 自动纳入的包元数据与许可证。
 测试、样本、个人指引、本机报告及桌面调试工具不随插件分发。
 CI 只做构建、类型检查、测试与打包检查，不发布 npm、Release 或网站。
+`npm run pack:release` 构建当前源码并生成预构建 `.tgz`，通过 GitHub Release 附件分发；见[发行说明](releasing.md)。

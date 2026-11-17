@@ -2,7 +2,7 @@
   "name": "dsh-plugin-mojobox",
   "version": "0.0.1-p3.1",
   "private": true,
-  "description": "Mojobox 官方客户端整合包管理插件（本地开发版）",
+  "description": "Mojobox 官方客户端整合包管理插件",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -39,6 +39,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "pack:release": "npm run build && node scripts/pack-release.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },

@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://mojobox.cn/#/packs">浏览整合包</a> ·
+  <a href="#安装">安装</a> ·
   <a href="#使用方式">使用方式</a> ·
   <a href="docs/development.md">开发文档</a> ·
   <a href="https://github.com/lanyun077/EAC-mojobox">Mojobox 主仓库</a>
@@ -20,6 +21,25 @@ Mojobox Installer 在客户端的 **设置 → Mojobox** 提供整合包管理�
 - **按需安装和更新**：自行勾选组件，复用已安装版本，保留高版本及已有配置。
 - **查看进度和结果**：显示总进度，失败项可重试，也可保存日志。
 - **管理单个组件**：启用、暂停或删除；删除前提示受影响的整合包。
+
+## 安装
+
+**官方桌面端：** 打开「插件」页面，选择「添加插件」，在「包名或地址」中粘贴以下地址，按客户端提示安装：
+
+```text
+https://github.com/lanyun077/Mojobox-Installer/releases/download/v0.0.1-p3.1/dsh-plugin-mojobox-0.0.1-p3.1.tgz
+```
+
+**普通 `dsh web`：** 在终端执行：
+
+```bash
+dsh plugin --profile web add https://github.com/lanyun077/Mojobox-Installer/releases/download/v0.0.1-p3.1/dsh-plugin-mojobox-0.0.1-p3.1.tgz
+```
+
+**自定义 Profile：** 把命令中的 `web` 换成实际使用的名称。
+
+安装完成后，按宿主提示重启，打开 **设置 → Mojobox**。使用预构建包，无需自行编译。
+下载后本地安装、桌面端命令行及常见问题见[安装说明](docs/installation.md)；其他版本见 [Releases](https://github.com/lanyun077/Mojobox-Installer/releases)。
 
 ## 使用方式
 
