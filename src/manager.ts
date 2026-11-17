@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import semver from 'semver';
-import { NPM_NAME, readFeaturePack } from './feature-pack.js';
+import { hostVersionWarning, NPM_NAME, readFeaturePack } from './feature-pack.js';
 import type { FeaturePack } from './feature-pack.js';
 import type { Bundle, InstallResult, PluginManager, RuntimeEntry, ManagedComponent, ComponentAction, ComponentOperation } from './contracts.js';
 import type { ArtifactSource, ArtifactTarget } from './artifacts.js';
@@ -15,6 +15,7 @@ export interface PlanItem {
   action: 'install' | 'reuse' | 'update' | 'keep-newer' | 'unsupported' | 'remove' | 'keep';
   source?: string;
   reason: string;
+  warning?: string;
   sharedTargets?: { id: string; name: string; version: string }[];
   requirements?: { ref: string; range: string }[];
 }
@@ -26,6 +27,7 @@ export interface Plan {
   pack: FeaturePack;
   hostVersion: string;
   blocked?: string;
+  warning?: string;
   items: PlanItem[];
   selected: string[];
 }
@@ -75,7 +77,7 @@ export function failureReason(result: InstallResult): string {
   const code = result.error?.code ?? result.application;
   const detail = `${result.error?.diagnostic ?? result.error?.message ?? ''}\n${result.packageResult?.output ?? ''}`;
   if (result.pendingBuilds?.length || /ERR_PNPM_IGNORED_BUILDS/.test(detail)) return '官版需要批准此插件的构建脚本。请先审核并在官版完成审批，再重试失败项；安装器不会自动放行';
-  if (code === 'incompatible-version') return '插件声明的内核版本不兼容，请等待插件适配；未添加版本豁免';
+  if (code === 'incompatible-version') return '官版宿主拒绝了插件的版本兼容声明；请查看具体要求或联系插件作者。安装器未修改声明，未添加版本豁免';
   if (/\b(?:EPERM|EBUSY)\b/.test(detail)) return '文件被占用或权限不足，请检查占用／权限，核对任务状态后重试失败项';
   return `${code}；请展开诊断记录查看详细错误，核对后可重试失败项`;
 }
@@ -145,7 +147,7 @@ export class PackManager {
       status: task.status, operation: task.operation, removedAt: task.removedAt, hostVersion: task.hostVersion, startedAt: task.startedAt, finishedAt: task.finishedAt,
       items: task.items.map(item => ({ ...item, reason: redact(item.reason), result: item.result ? safeResult(item.result) : undefined }))
     }));
-    return { path: await this.store.saveLog({ createdAt: new Date().toISOString(), installerVersion: '0.0.1-p3.0', hostVersion: this.hostVersion, busy: this.busy, componentOperation: this.componentOperation, context: Object.fromEntries(Object.entries(context).map(([key, value]) => [key, redact(value)])), records: tasks, bundles: status.bundles, runtime: status.runtime }) };
+    return { path: await this.store.saveLog({ createdAt: new Date().toISOString(), installerVersion: '0.0.1-p3.1', hostVersion: this.hostVersion, busy: this.busy, componentOperation: this.componentOperation, context: Object.fromEntries(Object.entries(context).map(([key, value]) => [key, redact(value)])), records: tasks, bundles: status.bundles, runtime: status.runtime }) };
   }
   dispose() { this.disposed = true; }
   private conflictReason(pack: FeaturePack, bundles: Bundle[]): string | undefined {
@@ -274,9 +276,8 @@ export class PackManager {
     try {
       const pack = await load();
       const bundles = await this.manager.listBundles();
-      const range = pack.manifest.requires?.dsh;
-      const blocked = !range ? '整包未声明内核兼容范围，无法安装' : !semver.satisfies(this.hostVersion, range, { includePrerelease: true }) ? `整包要求内核 ${range}，当前为 ${this.hostVersion}` :
-        this.conflictReason(pack, bundles);
+      const warning = hostVersionWarning(this.hostVersion, pack.manifest.requires?.dsh);
+      const blocked = this.conflictReason(pack, bundles);
       const items: PlanItem[] = new Array(pack.manifest.plugins.length);
       let next = 0;
       const inspectNext = async () => {
@@ -289,6 +290,7 @@ export class PackManager {
             if (['install', 'update'].includes(item.action) && this.artifacts) {
               const target = await this.artifacts.describe(item.ref, item.target!);
               this.targets.set(item.ref, target);
+              item.warning = target.warning;
               item.requirements = target.requirements?.filter(requirement => pack.manifest.plugins.some(plugin => plugin.ref === requirement.ref));
             }
             item.sharedTargets = this.records.filter(record => !record.removedAt && record.pack.manifest.id !== pack.manifest.id)
@@ -299,7 +301,7 @@ export class PackManager {
         }
       };
       await Promise.all(Array.from({ length: Math.min(4, items.length) }, inspectNext));
-      return this.plan = { id: randomUUID(), source, pack, hostVersion: this.hostVersion, blocked, items,
+      return this.plan = { id: randomUUID(), source, pack, hostVersion: this.hostVersion, blocked, warning, items,
         selected: items.filter(item => ['install', 'update'].includes(item.action) && (!selectedRefs || selectedRefs.includes(item.ref))).map(item => item.ref) };
     } finally { this.busy = false; }
   }

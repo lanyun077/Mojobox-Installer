@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import semver from 'semver';
 import { download } from './artifacts.js';
-import { exactVersion, MAX_ARCHIVE_BYTES, NPM_NAME, readFeaturePack } from './feature-pack.js';
+import { exactVersion, hostVersionWarning, MAX_ARCHIVE_BYTES, NPM_NAME, readFeaturePack } from './feature-pack.js';
 import type { PackManifest } from './feature-pack.js';
 import type { TaskRecord } from './manager.js';
 import { redact } from './manager.js';
@@ -13,12 +13,23 @@ const SITE_ROOT = new URL('../', CATALOG_URL);
 const LEGACY_ROOT = new URL('https://lanyun077.github.io/EAC-mojobox/');
 export interface CatalogEntry {
   id: string; version: string; name: string; description: string; author: string;
+  source?: string;
+  submitter?: { login: string; userId: number };
+  downloadsAll?: number | null; downloads7d?: number | null; statisticsAt?: string; statisticsStale?: boolean;
   requires?: string; components: PackManifest['plugins']; archiveUrl: string; archiveSize: number; archiveDigest: string;
 }
 interface Cache { document: unknown; checkedAt: string; identities: Record<string, string> }
 export interface CatalogView {
   checkedAt?: string; stale: boolean; error?: string;
-  entries: (CatalogEntry & { blocked?: string; installedVersion?: string; newer: boolean })[];
+  metadataLoading?: boolean; metadataError?: string;
+  entries: (CatalogEntry & { blocked?: string; warning?: string; installedVersion?: string; newer: boolean })[];
+}
+function sourceUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return;
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'https:' && !url.username && !url.password) return url.href;
+  } catch { /* Optional display metadata must not block installation. */ }
 }
 function archiveUrl(value: unknown, id: string, version: string): string {
   if (typeof value !== 'string') throw new Error('Catalog archive URL is missing');
@@ -43,7 +54,7 @@ export function parseCatalog(value: any): CatalogEntry[] {
       return { ref: plugin.ref, version: plugin.version, enabled: plugin.enabled };
     });
     if (!components.length) throw new Error('Catalog function pack has no components');
-    return { id: m.id, version: m.version, name: m.name, description: m.description, author: item.author, requires: range, components, archiveUrl: archiveUrl(item.archiveUrl, m.id, m.version), archiveSize: item.archiveSize, archiveDigest: item.archiveDigest };
+    return { id: m.id, version: m.version, name: m.name, description: m.description, author: item.author, source: sourceUrl(item.source), requires: range, components, archiveUrl: archiveUrl(item.archiveUrl, m.id, m.version), archiveSize: item.archiveSize, archiveDigest: item.archiveDigest };
   });
 }
 
@@ -53,6 +64,9 @@ export class Catalog {
   private stale = true;
   private error?: string;
   private refreshing?: Promise<void>;
+  private metadataLoading = false;
+  private metadataError?: string;
+  private presentation = new Map<string, Partial<CatalogEntry>>();
   // Transport injection is only for tests; product routes always use the fixed official URL.
   constructor(private file: string, private transport = download) {}
   async initialize() {
@@ -65,12 +79,11 @@ export class Catalog {
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.error = redact(String(error)); }
   }
   view(hostVersion: string, records: TaskRecord[]): CatalogView {
-    return { checkedAt: this.cache?.checkedAt, stale: this.stale, error: this.error, entries: this.entries.map(entry => {
+    return { checkedAt: this.cache?.checkedAt, stale: this.stale, error: this.error, metadataLoading: this.metadataLoading, metadataError: this.metadataError, entries: this.entries.map(entry => {
       const record = records.find(record => record.pack.manifest.id === entry.id);
       const installedVersion = record?.removedAt ? undefined : record?.pack.manifest.version;
-      const blocked = !entry.requires ? '整包未声明内核兼容范围，无法安装' : !semver.satisfies(hostVersion, entry.requires, { includePrerelease: true }) ? `整包要求内核 ${entry.requires}，当前为 ${hostVersion}` :
-        record?.pack.manifest.version === entry.version && `sha256:${record.pack.sha256}` !== entry.archiveDigest ? '同版本归档摘要与本地记录不同，已停止远端安装' : undefined;
-      return { ...entry, installedVersion, blocked, newer: !this.stale && !blocked && !!semver.valid(installedVersion) && semver.gt(entry.version, installedVersion!) };
+      const blocked = record?.pack.manifest.version === entry.version && `sha256:${record.pack.sha256}` !== entry.archiveDigest ? '同版本归档摘要与本地记录不同，已停止远端安装' : undefined;
+      return { ...entry, ...this.presentation.get(`${entry.id}@${entry.version}`), installedVersion, blocked, warning: hostVersionWarning(hostVersion, entry.requires), newer: !this.stale && !blocked && !!semver.valid(installedVersion) && semver.gt(entry.version, installedVersion!) };
     }) };
   }
   refresh(): Promise<void> {
@@ -94,7 +107,42 @@ export class Catalog {
       await writeFile(temporary, JSON.stringify(cache), { mode: 0o600 });
       await rename(temporary, this.file);
       this.cache = cache; this.entries = entries; this.stale = false; this.error = undefined;
+      void this.fetchPresentation(cache);
     } catch (error) { this.stale = true; this.error = redact(String(error)); }
+  }
+  private async fetchPresentation(cache: Cache) {
+    this.metadataLoading = true; this.metadataError = undefined;
+    const results = await Promise.allSettled(['contributors', 'rankings'].map(async name => {
+      const bytes = await this.transport(new URL(`generated/${name}.json`, SITE_ROOT).href, 2 * 1024 * 1024, 12000);
+      if (bytes.length > 2 * 1024 * 1024) throw new Error('Display metadata exceeds size limit');
+      const data = JSON.parse(bytes.toString('utf8'));
+      if (data?.format !== `mojobox-${name}-v1` || !Array.isArray(data.items) || data.items.length > 10000) throw new Error(`Invalid ${name} metadata`);
+      if (name === 'contributors' && data.repository !== 'lanyun077/EAC-mojobox') throw new Error('Invalid contributor repository');
+      if (name === 'rankings' && data.data_as_of !== null && !Number.isFinite(Date.parse(data.data_as_of))) throw new Error('Invalid statistics timestamp');
+      return data;
+    }));
+    if (this.cache !== cache) return;
+    const contributors = results[0].status === 'fulfilled' ? results[0].value : null;
+    const rankings = results[1].status === 'fulfilled' ? results[1].value : null;
+    this.presentation.clear();
+    for (const entry of this.entries) {
+      const matches = (item: any) => item?.kind === 'pack' && item.resource_id === entry.id && item.version === entry.version;
+      const submission = contributors?.items.find(matches)?.first_submission;
+      const stats = rankings?.items.find(matches);
+      const metadata: Partial<CatalogEntry> = {};
+      if (Number.isSafeInteger(submission?.github_user_id) && submission.github_user_id > 0 && typeof submission.github_login === 'string' && /^[a-z0-9][a-z0-9-]{0,38}$/i.test(submission.github_login)) {
+        metadata.submitter = { login: submission.github_login, userId: submission.github_user_id };
+      }
+      const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null;
+      if (stats) {
+        metadata.downloadsAll = count(stats.downloads_all); metadata.downloads7d = count(stats.downloads_7d);
+        metadata.statisticsAt = rankings.data_as_of ?? undefined;
+        metadata.statisticsStale = rankings.stale === true || !metadata.statisticsAt || Date.now() - Date.parse(metadata.statisticsAt) > 2 * 86400000;
+      }
+      this.presentation.set(`${entry.id}@${entry.version}`, metadata);
+    }
+    this.metadataError = results.some(result => result.status === 'rejected') ? '部分投稿或下载统计暂不可用' : undefined;
+    this.metadataLoading = false;
   }
   async archive(id: string, version: string, hostVersion: string, records: TaskRecord[]): Promise<Buffer> {
     if (this.stale || this.refreshing) throw new Error('Refresh the official catalog before installing');

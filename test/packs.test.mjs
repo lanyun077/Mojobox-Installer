@@ -7,6 +7,7 @@ import { ZipFile } from 'yazl';
 import { readFeaturePack } from '../lib/feature-pack.js';
 import { PackManager, RecordStore, redact, failureReason, safeResult } from '../lib/manager.js';
 import { createHandler, apply } from '../lib/index.js';
+import semver from 'semver';
 
 export const manifest = (plugins = [{ ref: 'dsh-plugin-a', version: '1.0.0' }], patch = {}) => ({ formatVersion: 1, id: 'test-pack', name: 'Test', version: '1.0.0', requires: { dsh: '0.2.2-rc.1' }, plugins, ...patch });
 export async function archive(value, entries = []) {
@@ -389,9 +390,46 @@ test('archive and manifest boundaries reject before installation', async () => {
   for (let offset = traversal.indexOf('pack.json'); offset !== -1; offset = traversal.indexOf('pack.json', offset + 9)) traversal.write('../x.json', offset);
   await assert.rejects(readFeaturePack(traversal));
 });
-test('incompatible and unknown kernel and unresolved conflicts never inspect or write', async t => {
+test('installer metadata does not impose an unverified host version floor or ceiling', async () => {
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const lock = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  for (const metadata of [pkg, lock.packages['']]) {
+    assert.equal(Object.hasOwn(metadata.engines, 'dsh'), false);
+    assert.deepEqual(Object.keys(metadata.peerDependencies ?? {}).filter(name => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')), []);
+  }
+  assert.equal(lock.packages[''].version, pkg.version);
+  assert.equal(lock.version, pkg.version);
+});
+
+test('pack kernel differences and absent declarations warn without preventing selective installation', async t => {
+  const env = await setup(t);
+  for (const patch of [{ requires: { dsh: '0.2.0-rc.2' } }, { requires: {} }]) {
+    const plan = await env.coordinator.preview(await archive(manifest(undefined, patch)));
+    assert.equal(plan.blocked, undefined); assert.match(plan.warning, /逐项交由官版核验/);
+    assert.notEqual(plan.items[0].action, 'unsupported');
+    await env.coordinator.start(plan.id, plan.selected);
+    assert.equal((await finish(env.coordinator)).status, 'complete');
+  }
+  assert.equal(env.calls.length, 1);
+});
+
+test('per-plugin kernel warnings preserve host refusal and continue independent components', async t => {
+  const env = await setup(t);
+  const install = env.manager.installBundle;
+  env.manager.installBundle = (spec, options) => spec.includes('dsh-plugin-a@') ? Promise.resolve({ application: 'failed', changed: false, error: { code: 'incompatible-version' } }) : install(spec, options);
+  env.artifacts.describe = async (name, version) => ({ name, version, sha512: 'a'.repeat(128), warning: '声明内核范围不同，将逐项交由官版核验' });
+  const plan = await env.coordinator.preview(await archive(manifest([{ ref: 'dsh-plugin-a', version: '1.0.0' }, { ref: 'dsh-plugin-b', version: '1.0.0' }])));
+  assert.equal(plan.items[0].action, 'install'); assert.match(plan.items[0].warning, /核验/);
+  await env.coordinator.start(plan.id, plan.selected);
+  const task = await finish(env.coordinator);
+  assert.deepEqual(task.items.map(item => item.status), ['failed', 'installed']);
+  assert.match(task.items[0].reason, /官版宿主拒绝/);
+  assert.equal(task.items[0].result.error.code, 'incompatible-version');
+});
+
+test('unresolved conflicts still prevent inspection and installation', async t => {
   const { coordinator } = await setup(t, { inspect: () => assert.fail('incompatible pack was inspected') });
-  for (const patch of [{ requires: { dsh: '0.2.0-rc.2' } }, { requires: {} }, { conflicts: ['bodyAttr:theme'] }]) {
+  for (const patch of [{ conflicts: ['bodyAttr:theme'] }]) {
     const plan = await coordinator.preview(await archive(manifest(undefined, patch)));
     assert.ok(plan.blocked);
     await assert.rejects(coordinator.start(plan.id, []));
@@ -580,12 +618,20 @@ test('exact-route handlers enforce size and selection boundary; errors are redac
   assert.equal(rejected.status, 400);
   assert.equal(redact('https://name:secret@example.org token=abc password=xyz\nC:\\Users\\person\\file.log'), 'https://[REDACTED]@example.org token=[REDACTED] password=[REDACTED]\n[LOCAL_PATH]');
 });
-test('Host registration uses the authenticated owner Connection and disposes all routes', async t => {
+for (const hostVersion of ['0.2.1-rc.5', '0.2.1', '0.2.2-rc.3']) test(`Host ${hostVersion} registers owner routes and previews packs independently of their kernel requirements`, async t => {
   const env = await setup(t);
-  await writeFile(join(env.directory, 'package.json'), JSON.stringify({ version: '0.2.2-rc.1' }));
+  env.bundles.push(bundle('dsh-plugin-a'));
+  await writeFile(join(env.directory, 'package.json'), JSON.stringify({ version: hostVersion }));
   const routes = []; const cleanups = [];
   await apply({ pluginManager: env.manager, profileContext: { dir: env.directory, installAnchor: join(env.directory, 'package.json') }, connection: { fetch: { register: route => { routes.push(route); return () => routes.splice(routes.indexOf(route), 1); } } }, effect: fn => cleanups.push(fn()), logger: { info() {} } });
   assert.deepEqual(routes.map(route => [route.path, route.methods]), [['/api/mojobox/status', ['GET']], ['/api/mojobox/preview', ['POST']], ['/api/mojobox/start', ['POST']], ['/api/mojobox/replan', ['POST']], ['/api/mojobox/remove-preview', ['POST']], ['/api/mojobox/component', ['POST']], ['/api/mojobox/catalog', ['GET']], ['/api/mojobox/catalog-refresh', ['POST']], ['/api/mojobox/catalog-preview', ['POST']], ['/api/mojobox/save-log', ['POST']]]);
+  const status = await (await routes.find(route => route.path.endsWith('/status')).fetch(new Request('http://local/api/mojobox/status'))).json();
+  assert.equal(status.hostVersion, hostVersion);
+  const preview = await routes.find(route => route.path.endsWith('/preview')).fetch(new Request('http://local/api/mojobox/preview', { method: 'POST', body: await archive(manifest()) }));
+  assert.equal(preview.status, 200);
+  const plan = await preview.json();
+  assert.equal(plan.blocked, undefined); assert.match(plan.warning, /逐项交由官版核验/);
+  assert.equal(plan.items[0].action, 'reuse');
   for (const cleanup of cleanups.reverse()) cleanup();
   assert.equal(routes.length, 0);
 });

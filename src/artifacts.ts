@@ -5,6 +5,7 @@ import { gunzipSync } from 'node:zlib';
 import { Parser, type ReadEntry } from 'tar';
 import semver from 'semver';
 import type { PluginManager } from './contracts.js';
+import { hostVersionWarning } from './feature-pack.js';
 
 export interface ArtifactTarget {
   name: string;
@@ -12,6 +13,7 @@ export interface ArtifactTarget {
   registry: string;
   url: string;
   sha512: string;
+  warning?: string;
   requirements?: { ref: string; range: string }[];
 }
 export interface ArtifactSource {
@@ -31,10 +33,10 @@ function trustedUrl(value: string): URL {
   return url;
 }
 
-export async function download(url: string, limit: number): Promise<Buffer> {
+export async function download(url: string, limit: number, timeoutMs = 60000): Promise<Buffer> {
   let target = trustedUrl(url);
   const release = target.origin === 'https://github.com' && /^\/lanyun077\/EAC-mojobox\/releases\/download\/[^/]+\/[^/]+\.dshpack$/.test(target.pathname) && !target.search;
-  const signal = AbortSignal.timeout(60000);
+  const signal = AbortSignal.timeout(timeoutMs);
   let response: Response | undefined;
   for (let hop = 0; hop <= 3; hop++) {
     response = await fetch(target, { redirect: release ? 'manual' : 'error', signal });
@@ -109,12 +111,12 @@ export class RegistryArtifacts implements ArtifactSource {
     const value = JSON.parse((await download(new URL(`${encodeURIComponent(name)}/${encodeURIComponent(version)}`, registry).href, 2 * 1024 * 1024)).toString('utf8'));
     if (value.name !== name || value.version !== version || !value.dsh?.bundle || typeof value.dsh.bundle !== 'object' || Array.isArray(value.dsh.bundle)) throw new Error('Registry identity, exact version or bundle declaration mismatch');
     const range = value.engines?.dsh;
-    if (range !== undefined && (typeof range !== 'string' || !semver.validRange(range) || !semver.satisfies(this.hostVersion, range, { includePrerelease: true }))) throw new Error('Target plugin does not support the current host');
+    if (range !== undefined && (typeof range !== 'string' || !semver.validRange(range))) throw new Error('Invalid plugin engines.dsh range');
     const hashes = typeof value.dist?.integrity === 'string' ? value.dist.integrity.split(/\s+/) : [];
     const strong = hashes.find((hash: string) => /^sha512-[A-Za-z0-9+/]{86}==$/.test(hash));
     if (!strong || typeof value.dist.tarball !== 'string') throw new Error('Registry artifact requires SHA-512 integrity and a tarball URL');
     const requirements = requirementsOf(value);
-    return { name, version, registry, url: trustedUrl(value.dist.tarball).href, sha512: Buffer.from(strong.slice(7), 'base64').toString('hex'), requirements };
+    return { name, version, registry, url: trustedUrl(value.dist.tarball).href, sha512: Buffer.from(strong.slice(7), 'base64').toString('hex'), requirements, warning: hostVersionWarning(this.hostVersion, range) };
   }
   async prepare(target: ArtifactTarget): Promise<string> {
     const file = this.file(target.sha512);

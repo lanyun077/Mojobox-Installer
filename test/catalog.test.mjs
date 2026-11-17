@@ -23,17 +23,64 @@ async function setup(t, m = manifest()) {
   const bytes = await archive(m);
   const entry = { format: 'eac-feature-pack-v1', metadata: { id: m.id, version: m.version, name: m.name, description: 'Description' }, author: 'Author', requires: m.requires, components: m.plugins, archiveUrl: 'generated/downloads/test.dshpack', archiveSize: bytes.length, archiveDigest: digest(bytes) };
   const document = { apiVersion: 'catalog.mojobox.dev/v1alpha1', mode: 'intake', demo: false, packs: [entry] };
-  const state = { document, bytes, offline: false, requests: [] };
+  const state = { document, bytes, offline: false, requests: [], contributors: { format: 'mojobox-contributors-v1', repository: 'lanyun077/EAC-mojobox', items: [] }, rankings: { format: 'mojobox-rankings-v1', data_as_of: new Date().toISOString(), items: [] } };
   const file = join(directory, 'catalog.json');
   const transport = async (url, limit) => {
     state.requests.push({ url, limit });
     if (state.offline) throw new Error('offline token=secret');
+    const metadata = /generated\/(contributors|rankings)\.json$/.exec(url)?.[1];
+    if (metadata) { if (state.metadataGate) await state.metadataGate; if (state.metadataOffline) throw new Error('offline'); return Buffer.from(JSON.stringify(state[metadata])); }
     return url === CATALOG_URL ? Buffer.from(JSON.stringify(state.document)) : state.bytes;
   };
   const catalog = new Catalog(file, transport); await catalog.initialize();
   return { catalog, state, entry, directory, file, transport };
 }
 const request = (route, body) => new Request(`http://local/api/mojobox/${route}`, { method: 'POST', body: JSON.stringify(body) });
+const presentationReady = async catalog => {
+  for (let i = 0; i < 100 && catalog.view(host, []).metadataLoading; i++) await new Promise(setImmediate);
+  assert.equal(catalog.view(host, []).metadataLoading, false);
+};
+
+test('market metadata joins verified submitters and real download counts by exact pack identity', async t => {
+  const { catalog, state, entry } = await setup(t);
+  entry.source = 'https://github.com/example/original';
+  state.contributors.items = [{ kind: 'pack', resource_id: 'remote-test', version: '1.1.0', first_submission: { github_login: 'submitter', github_user_id: 42 } }];
+  state.rankings.items = [{ kind: 'pack', resource_id: 'remote-test', version: '1.1.0', downloads_all: 3582500, downloads_7d: 0 }];
+  let release;
+  state.metadataGate = new Promise(resolve => { release = resolve; });
+  await catalog.refresh();
+  assert.equal(catalog.view(host, []).stale, false);
+  assert.equal(catalog.view(host, []).metadataLoading, true);
+  release(); await presentationReady(catalog);
+  const result = catalog.view(host, []).entries[0];
+  assert.equal(result.source, entry.source);
+  assert.deepEqual(result.submitter, { login: 'submitter', userId: 42 });
+  assert.equal(result.downloadsAll, 3582500); assert.equal(result.downloads7d, 0);
+  assert.equal(result.statisticsAt, state.rankings.data_as_of);
+  state.contributors.items[0].version = '1.0.0'; state.rankings.items[0].version = '1.0.0';
+  await catalog.refresh(); await presentationReady(catalog);
+  assert.equal(catalog.view(host, []).entries[0].submitter, undefined);
+  assert.equal(catalog.view(host, []).entries[0].downloadsAll, undefined);
+});
+
+test('display metadata rejects unsafe identities, preserves unknown counts and cannot block installation', async t => {
+  const { catalog, state, entry } = await setup(t);
+  entry.source = 'javascript:alert(1)';
+  state.contributors.items = [{ kind: 'pack', resource_id: 'remote-test', version: '1.1.0', first_submission: { github_login: '../evil', github_user_id: 42 } }];
+  state.rankings.data_as_of = '2020-01-01T00:00:00Z';
+  state.rankings.items = [{ kind: 'pack', resource_id: 'remote-test', version: '1.1.0', downloads_all: -1, downloads_7d: null }];
+  await catalog.refresh(); await presentationReady(catalog);
+  const result = catalog.view(host, []).entries[0];
+  assert.equal(result.source, undefined); assert.equal(result.submitter, undefined);
+  assert.equal(result.downloadsAll, null); assert.equal(result.downloads7d, null);
+  assert.equal(result.statisticsStale, true);
+  state.metadataOffline = true;
+  await catalog.refresh(); await presentationReady(catalog);
+  assert.equal(catalog.view(host, []).stale, false);
+  assert.match(catalog.view(host, []).metadataError, /暂不可用/);
+  assert.equal(catalog.view(host, []).entries[0].downloadsAll, undefined);
+  assert.ok(await catalog.archive('remote-test', '1.1.0', host, []));
+});
 
 test('catalog validates production protocol, consumed fields and official subpath URLs', async t => {
   const { state, entry } = await setup(t);
@@ -84,8 +131,9 @@ test('newer detection preserves local targets; metadata and disappearance do not
   const { catalog, state, entry } = await setup(t);
   const records = [{ source: 'local', pack: { manifest: manifest({ version: '1.0.0' }), sha256: 'a'.repeat(64) } }];
   await catalog.refresh(); assert.equal(catalog.view(host, records).entries[0].newer, true);
-  assert.equal(catalog.view('0.2.0-rc.2', records).entries[0].newer, false);
-  assert.match(catalog.view('0.2.0-rc.2', records).entries[0].blocked, /内核/);
+  assert.equal(catalog.view('0.2.0-rc.2', records).entries[0].newer, true);
+  assert.equal(catalog.view('0.2.0-rc.2', records).entries[0].blocked, undefined);
+  assert.match(catalog.view('0.2.0-rc.2', records).entries[0].warning, /逐项交由官版核验/);
   records[0].pack.manifest.version = entry.metadata.version; records[0].pack.sha256 = entry.archiveDigest.slice(7);
   entry.metadata.description = 'Changed copy'; await catalog.refresh(); assert.equal(catalog.view(host, records).entries[0].newer, false);
   records[0].pack.sha256 = 'b'.repeat(64); assert.match(catalog.view(host, records).entries[0].blocked, /摘要/);
@@ -115,21 +163,23 @@ test('download enforces exact size, digest, archive identity and declarations be
     await catalog.refresh(); await assert.rejects(catalog.archive('remote-test', '1.1.0', host, []));
   }
 });
-test('incompatible catalog entries never download, status polling never accesses the network', async t => {
+test('kernel declaration differences allow remote preview, status polling never accesses the network', async t => {
   const { catalog, state } = await setup(t, manifest({ requires: { dsh: '0.2.0-rc.2' } })); await catalog.refresh();
-  await assert.rejects(catalog.archive('remote-test', '1.1.0', host, []), /内核/);
+  assert.ok(await catalog.archive('remote-test', '1.1.0', host, []));
+  assert.match(catalog.view(host, []).entries[0].warning, /逐项交由官版核验/);
+  const before = state.requests.length;
   const manager = { status: async () => ({ hostVersion: host, records: [] }) };
   for (let i = 0; i < 3; i++) await createHandler(manager, 'status', catalog)(new Request('http://local'));
-  assert.equal(state.requests.length, 1);
+  assert.equal(state.requests.length, before);
 });
-test('legacy packs without a kernel range remain visible and blocked alongside compatible entries', async t => {
+test('packs without a kernel range remain available with an explicit warning', async t => {
   const { catalog, state, entry } = await setup(t);
   state.document.packs.push({ ...entry, metadata: { ...entry.metadata, id: 'legacy' }, requires: {} });
   await catalog.refresh(); const view = catalog.view(host, []);
   assert.equal(view.stale, false); assert.equal(view.entries.length, 2); assert.equal(view.entries[0].blocked, undefined);
-  assert.match(view.entries[1].blocked, /未声明/);
-  await assert.rejects(catalog.archive('legacy', '1.1.0', host, []), /未声明/);
-  assert.equal(state.requests.length, 1);
+  assert.equal(view.entries[1].blocked, undefined);
+  assert.match(view.entries[1].warning, /未声明/);
+  assert.equal(state.requests.filter(request => request.url === CATALOG_URL).length, 1);
 });
 test('remote and local previews share selective executor; records retain source across retry', async t => {
   const { catalog, state, directory } = await setup(t); await catalog.refresh();

@@ -2,7 +2,7 @@
 
 本仓库维护官版安装器。网站、插件收录、包清单与归档请提交到
 [Mojobox 主仓库](https://github.com/lanyun077/EAC-mojobox#提交资源)。
-架构与范围见 [README](README.md)、[架构说明](docs/architecture.md)及[兼容边界](docs/compatibility.md)。
+入门、构建与仓库结构见[开发文档](docs/development.md)，详细设计见[架构说明](docs/architecture.md)。
 
 ## 本地验证
 

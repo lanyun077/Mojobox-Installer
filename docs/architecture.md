@@ -124,13 +124,23 @@ flowchart TD
   GitHub Releases 中与包 ID、版本严格绑定的附件。仅 Release 附件允许跳转到
   `release-assets.githubusercontent.com`，不转发凭据；核对大小、SHA-256、包身份与组件声明。
 - 同 ID、同版本的已核验摘要不允许悄悄变化；远端移除条目不删除本地组件。
+- 市场展示从同站 `generated/contributors.json`（`mojobox-contributors-v1`）与
+  `generated/rankings.json`（`mojobox-rankings-v1`）后台读取可选元数据，单请求限时 12 秒、限长 2 MiB。
+  按整合包 ID 与版本关联首次投稿者及下载统计；投稿者身份来自主仓合并 PR，独立于包内原作者声明。
+  标题使用目录声明的 HTTPS `source`，头像按 GitHub 数字用户 ID 从 `avatars.githubusercontent.com` 加载。
+  下载量为 `downloads_all`，热度为 `downloads_7d`，未知值不作零；超过两日的统计标记待刷新。
+  展示数据只在内存保留，重启后重新获取；读取失败不会改变归档校验、兼容判断或安装可用性。
 - 注册表来自官方服务当前配置；更新产物要求 HTTPS 和 SHA-512，不跳转来源或回落到公共注册表。
   HTTP 仅限本机回环测试。
 
 涉及协议变化时先在主仓明确格式与版本，再在本仓更新消费者、Schema 来源和正反例；
 安装器与目录独立发布，不要求普通内容更新伴随安装器发版。
 官版接口变化需要更新本仓契约与验证记录，不能以放宽版本检查冒充适配。
-版本范围匹配沿用官方 `includePrerelease: true` 语义；目录、整包与产物校验保持一致。
+版本范围匹配沿用官方 `includePrerelease: true` 语义。目录与本地整包共用版本提醒，
+缺失或不匹配不再阻止整包；npm 插件元数据的内核范围差异在对应预览行提示，最终由官版宿主判定。
+非法范围语法、归档摘要／身份异常和已声明冲突仍拒绝，插件精确版本与依赖约束不放宽。
+安装器自身不声明无依据的 `engines.dsh` 上下界，也不通过 DSH peer 依赖变相锁定内核。
+设置页使用旧内核已有的权限 Hook；具体接口差异与整合包兼容分别处理，不将已测版本当作最低支持版本。
 
 ## 构建与仓库边界
 

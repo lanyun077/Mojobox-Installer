@@ -30,6 +30,10 @@ export function exactVersion(value: string | undefined): boolean {
   const parsed = semver.parse(value);
   return !!parsed && parsed.version + (parsed.build.length ? `+${parsed.build.join('.')}` : '') === value;
 }
+export function hostVersionWarning(hostVersion: string, range?: string): string | undefined {
+  if (!range) return '未声明内核兼容范围，将逐项交由官版核验';
+  if (!semver.satisfies(hostVersion, range, { includePrerelease: true })) return `声明内核范围 ${range}，当前为 ${hostVersion}；版本差异不代表已确认不兼容，将逐项交由官版核验`;
+}
 
 // Reads the accepted members in memory; never extracts content into the profile.
 export async function readFeaturePack(bytes: Buffer): Promise<FeaturePack> {

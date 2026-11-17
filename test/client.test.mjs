@@ -30,7 +30,6 @@ function harness(t, handlers = {}) {
   runInNewContext(compiled, {
     window: { __ModuleLoader__: { load(module) { module.factory(() => react).apply({
       effect(fn) { cleanups.push(fn()); },
-      remoteAccess: { whenAccess(_method, fn) { fn(); } },
       slots: { inject(_name, fn) { fn(); }, register(_options, value) { component = value; } }
     }); } } },
     fetch: async (url, init) => { const action = url.split('/').at(-1); requests.push({ action, init }); return handlers[action]?.(init) ?? response(action === 'status' ? snapshot() : catalog); },
@@ -39,7 +38,7 @@ function harness(t, handlers = {}) {
     navigator: { clipboard: { writeText: async value => { handlers.copy?.(value); } } },
     setInterval(fn) { intervals.push(fn); return fn; }, clearInterval() {}
   });
-  const render = () => { hook = 0; renders++; tree = component(); while (effects.length) { const cleanup = effects.shift()(); if (cleanup) cleanups.push(cleanup); } return tree; };
+  const render = () => { hook = 0; renders++; const page = component({ useRemoteAccess: () => true }); tree = page.type(page.props); while (effects.length) { const cleanup = effects.shift()(); if (cleanup) cleanups.push(cleanup); } return tree; };
   const all = (node = tree) => !node || typeof node !== 'object' ? [] : [node, ...node.children.flatMap(child => all(child ?? null))];
   const text = (node = tree) => !node ? '' : typeof node !== 'object' ? String(node) : node.children.map(child => text(child ?? null)).join('');
   const button = label => { const found = all().find(n => n.type === 'button' && (n.props['aria-label'] === label || text(n) === label)); assert.ok(found, 'Missing button: '+label); return found; };
@@ -48,6 +47,60 @@ function harness(t, handlers = {}) {
   render();
   return { render, settle, text, button, all, requests, timeouts, document, poll(time) { now = time; for (const fn of intervals) fn(); }, get updates() { return updates; }, get renders() { return renders; } };
 }
+
+test('settings registration uses the 0.2.1 permission Hook without the newer whenAccess helper', () => {
+  let page, plugin;
+  runInNewContext(compiled, { AbortController, window: { __ModuleLoader__: { load(module) { plugin = module.factory(() => ({ createElement: (type, props, ...children) => ({ type, props, children }) })); } } } });
+  assert.deepEqual(Array.from(plugin.inject), ['slots']);
+  plugin.apply({ effect() {}, slots: { inject(name, fn) { assert.equal(name, 'settings.section'); return fn(); }, register(options, component) { assert.equal(options.id, 'mojobox-manager'); page = component; } } });
+  let allowed = false;
+  const props = { useRemoteAccess(action) { assert.equal(action, 'pluginManager/installBundle'); return allowed; } };
+  const denied = page(props);
+  assert.equal(denied.type, 'p'); assert.match(denied.children.join(''), /没有整合包管理权限/);
+  allowed = true;
+  assert.equal(typeof page(props).type, 'function');
+  allowed = false;
+  assert.equal(page(props).type, 'p');
+});
+
+test('market cards separate repository links, submitter identity, download metrics and installation preview', async t => {
+  const enriched = { ...entry, source: 'https://github.com/example/original', submitter: { login: 'contributor', userId: 42 }, downloadsAll: 3582500, downloads7d: 0 };
+  const ui = harness(t, { status: () => response({ ...snapshot(), catalog: { ...catalog, entries: [enriched] } }), 'catalog-preview': () => response(plan()) });
+  await ui.settle(); ui.button('市场').props.onClick(); ui.render();
+  const source = ui.all().find(n => n.type === 'a' && n.props.href === enriched.source);
+  assert.ok(source); assert.equal(source.props.target, '_blank');
+  assert.ok(ui.all().some(n => n.type === 'a' && n.props.href === 'https://github.com/contributor'));
+  const avatar = ui.all().find(n => n.type === 'img');
+  assert.equal(avatar.props.src, 'https://avatars.githubusercontent.com/u/42?s=32');
+  const image = {}; avatar.props.onError({ currentTarget: image }); assert.equal(image.hidden, true);
+  assert.match(ui.text(), /下载 3582.5k/); assert.match(ui.text(), /热度 0/);
+  assert.equal(ui.requests.filter(r => r.action === 'catalog-preview').length, 0);
+  await ui.button('安装 Test pack').props.onClick(); await ui.settle();
+  assert.equal(ui.requests.filter(r => r.action === 'catalog-preview').length, 1);
+  assert.equal(ui.requests.filter(r => r.action === 'start').length, 0);
+});
+
+test('market keeps absent submitters and statistics unknown while details remain available', async t => {
+  const ui = harness(t);
+  await ui.settle(); ui.button('市场').props.onClick(); ui.render();
+  assert.match(ui.text(), /投稿者未记录/); assert.match(ui.text(), /下载 待统计/); assert.match(ui.text(), /热度 待统计/);
+  assert.equal(ui.all().filter(n => n.type === 'img').length, 0);
+  ui.button('Test pack').props.onClick(); ui.render();
+  assert.ok(ui.button('预览 Test pack'));
+});
+
+test('kernel warnings remain visible without disabling selective installation', async t => {
+  const warning = '声明内核范围不同，将逐项交由官版核验';
+  const changed = { ...snapshot(), catalog: { ...catalog, entries: [{ ...entry, warning }] } };
+  const ui = harness(t, { status: () => response(changed), 'catalog-preview': () => response({ ...plan(), warning, items: [{ ...plan().items[0], warning: '插件版本要求待官版核验' }] }) });
+  await ui.settle(); ui.button('市场').props.onClick(); ui.render();
+  assert.match(ui.text(), /内核版本待核验/); assert.equal(ui.button('安装 Test pack').props.disabled, false);
+  ui.button('Test pack').props.onClick(); ui.render(); assert.ok(ui.text().includes(warning));
+  await ui.button('预览 Test pack').props.onClick(); await ui.settle();
+  assert.ok(ui.text().includes(warning)); assert.match(ui.text(), /插件版本要求待官版核验/);
+  assert.equal(ui.button('执行所选（1）').props.disabled, false);
+  assert.equal(ui.requests.filter(r => r.action === 'start').length, 0);
+});
 
 test('remote preview and install give immediate feedback and ignore double clicks', async t => {
   const preview = deferred(), start = deferred();
