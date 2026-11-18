@@ -3,74 +3,56 @@
 <p align="center">在官方 DeepSeek Harness 客户端中浏览、安装和更新 Mojobox 整合包。</p>
 
 <p align="center">
-  <a href="https://mojobox.cn/#/packs">浏览整合包</a> ·
   <a href="#安装">安装</a> ·
   <a href="#使用方式">使用方式</a> ·
   <a href="docs/development.md">开发文档</a> ·
   <a href="https://github.com/lanyun077/EAC-mojobox">Mojobox 主仓库</a>
 </p>
 
-Mojobox Installer 在客户端的 **设置 → Mojobox** 提供整合包管理入口，由 Mojobox 社区维护。
-
-
-
 ## 主要功能
 
-- **发现整合包**：展示原仓库、投稿者头像与名称、下载量和热度。
-- **导入文件**：在页面内拖入或选择 Mojobox `.dshpack`／ZIP 文件。
-- **按需安装和更新**：自行勾选组件，复用已安装版本，保留高版本及已有配置。
-- **查看进度和结果**：显示总进度，失败项可重试，也可保存日志。
-- **管理单个组件**：启用、暂停或删除；删除前提示受影响的整合包。
+- 按功能包、外观包浏览，查看来源、投稿者、下载量和热度。
+- 拖入 Mojobox `.dshpack`／ZIP 文件安装。
+- 选择需要安装或更新的组件，保留已有配置。
+- 查看总进度、重试失败项和保存日志。
+- 启用、暂停或删除单个组件。
 
 ## 安装
 
-**官方桌面端：** 打开「插件」页面，选择「添加插件」，在「包名或地址」中粘贴以下地址，按客户端提示安装：
+**官方桌面端：** 打开「插件 → 添加插件」，在「包名或地址」中粘贴：
 
 ```text
 https://github.com/lanyun077/Mojobox-Installer/releases/download/v0.0.1-p3.1/dsh-plugin-mojobox-0.0.1-p3.1.tgz
 ```
 
-**普通 `dsh web`：** 在终端执行：
+**dsh web：** 在终端执行：
 
 ```bash
 dsh plugin --profile web add https://github.com/lanyun077/Mojobox-Installer/releases/download/v0.0.1-p3.1/dsh-plugin-mojobox-0.0.1-p3.1.tgz
 ```
 
-**自定义 Profile：** 把命令中的 `web` 换成实际使用的名称。
+自定义 Profile 请将 `web` 换成实际名称。安装后按客户端提示重启，打开 **设置 → Mojobox**。
 
-安装完成后，按宿主提示重启，打开 **设置 → Mojobox**。使用预构建包，无需自行编译。
-下载后本地安装、桌面端命令行及常见问题见[安装说明](docs/installation.md)；其他版本见 [Releases](https://github.com/lanyun077/Mojobox-Installer/releases)。
+[本地文件安装与常见问题](docs/installation.md) · [下载其他版本](https://github.com/lanyun077/Mojobox-Installer/releases)
 
 ## 使用方式
 
-安装器已加载后，打开 **设置 → Mojobox**：
-
-| 页面 | 功能 |
+| 页面 | 操作 |
 | --- | --- |
-| 首页 | 拖入文件或选择本地整合包 |
-| 市场 | 浏览远端整合包，查看详情并预览安装 |
-| 已安装 | 查看结果、检查更新、重试失败项和保存日志 |
-| 管理 | 搜索并管理单个组件 |
+| 首页 | 拖入文件，或选择本地整合包 |
+| 市场 | 选择功能包或外观包，查看详情并预览安装 |
+| 已安装 | 检查更新、查看结果、重试失败项和保存日志 |
+| 管理 | 搜索组件，启用、暂停或删除 |
 
-安装前会展示组件清单，确认后执行。遇到失败，先查看结果或保存日志，再重试需要处理的组件。
+预览后勾选组件并确认安装。安装完成后查看结果，有问题时保存日志并重试失败项。
+下载量是 GitHub 附件累计下载次数，热度是近七日下载次数。
 
-## 版本与注意事项
+## 反馈与开发
 
-- 安装器不锁定内核版本，旧版和新版均按实际接口兼容；整合包能否使用另行核验。已实测与待验收版本见兼容说明。
-- 整合包或插件的内核声明有差异时会提醒，允许继续预览；最终能否安装由官版客户端判断。
-- 下载量为 GitHub 附件累计下载次数，热度为近 7 日下载次数。
-- 删除组件不清理其个人数据。需要恢复测试前状态时，应提前备份整个独立测试环境。
-
-详细支持范围见[兼容说明](docs/compatibility.md)，开发、构建与验证见[开发文档](docs/development.md)。
-
-## 反馈与参与
-
-| 内容 | 入口 |
-| --- | --- |
-| 安装、更新或界面问题 | [安装器 Issues](https://github.com/lanyun077/Mojobox-Installer/issues)，附版本、复现步骤和脱敏日志 |
-| 纠正整合包内容或提交资源 | [Mojobox 主仓库](https://github.com/lanyun077/EAC-mojobox#提交资源) |
-| 修改安装器代码 | [开发文档](docs/development.md) · [贡献指南](CONTRIBUTING.md) |
+- [安装器 Issues](https://github.com/lanyun077/Mojobox-Installer/issues)：附宿主版本、安装器版本、复现步骤和脱敏日志。
+- [Mojobox 主仓库](https://github.com/lanyun077/EAC-mojobox#提交资源)：提交整合包或纠正资源信息。
+- [开发文档](docs/development.md) · [贡献指南](CONTRIBUTING.md) · [使用要求](docs/compatibility.md)
 
 ## 许可
 
-安装器代码使用 [MIT](LICENSE) 许可。第三方插件、整合包及素材保留各自许可与署名。
+安装器代码采用 [MIT](LICENSE)。第三方插件、整合包和素材遵循各自的许可与署名。

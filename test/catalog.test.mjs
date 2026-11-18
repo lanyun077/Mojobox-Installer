@@ -41,6 +41,22 @@ const presentationReady = async catalog => {
   assert.equal(catalog.view(host, []).metadataLoading, false);
 };
 
+test('catalog preserves resource categories across refresh and cache without changing archive installation', async t => {
+  const { catalog, state, entry, file, transport } = await setup(t);
+  for (const category of ['appearance', 'workflow', 'function']) {
+    entry.metadata.category = category;
+    await catalog.refresh();
+    assert.equal(catalog.view(host, []).entries[0].category, category);
+    const cached = new Catalog(file, transport); await cached.initialize();
+    assert.equal(cached.view(host, []).entries[0].category, category);
+    assert.ok(await catalog.archive('remote-test', '1.1.0', host, []));
+  }
+  delete entry.metadata.category;
+  assert.equal(parseCatalog(state.document)[0].category, undefined);
+  entry.metadata.category = 'future-display-category';
+  assert.equal(parseCatalog(state.document)[0].category, undefined);
+});
+
 test('market metadata joins verified submitters and real download counts by exact pack identity', async t => {
   const { catalog, state, entry } = await setup(t);
   entry.source = 'https://github.com/example/original';
