@@ -1,18 +1,11 @@
 # Mojobox Installer 文档
 
-安装与功能入口见[仓库首页](../README.md)。本仓库维护官版安装器；网站、资源收录与整合包内容在
-[Mojobox 主仓库](https://github.com/lanyun077/EAC-mojobox)独立维护。
-
-| 文档 | 适合什么时候阅读 |
+| 你想做什么 | 文档 |
 | --- | --- |
-| [安装说明](installation.md) | 桌面端、命令行、自定义 Profile、本地文件安装与排查 |
-| [开发文档](development.md) | 开发入口：构建、仓库结构、兼容策略、数据来源与联调 |
-| [架构说明](architecture.md) | 查模块职责、安装链路、路由、数据目录和协议来源 |
-| [兼容与限制](compatibility.md) | 判断支持哪些输入、宿主，以及验证结论的边界 |
-| [贡献指南](../CONTRIBUTING.md) | 构建、测试、隔离联调、提交和故障反馈 |
-| [发行说明](releasing.md) | 制作预构建包与发布 GitHub Release |
-| [Schema 来源](../schema/README.md) | 核对本地 Schema 与主仓协议的关系 |
+| 安装与使用 | [快速开始](../README.md#安装) · [安装说明](installation.md) |
+| 核对环境与文件要求 | [使用要求](compatibility.md) |
+| 修改安装器 | [开发文档](development.md) · [贡献指南](../CONTRIBUTING.md) |
+| 理解实现 | [架构说明](architecture.md) · [Schema 来源](../schema/README.md) |
+| 发布安装包 | [发行说明](releasing.md) |
 
-制作和提交整合包请阅读主仓的[作者指南](https://github.com/lanyun077/EAC-mojobox/blob/main/docs/author-pack-request.md)、
-[收录规范](https://github.com/lanyun077/EAC-mojobox/blob/main/docs/intake.md)及
-[版本策略](https://github.com/lanyun077/EAC-mojobox/blob/main/docs/intake-version-policy.md)。
+制作与投稿整合包见 [Mojobox 主仓库](https://github.com/lanyun077/EAC-mojobox#提交资源)。

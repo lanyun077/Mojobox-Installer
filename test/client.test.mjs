@@ -89,6 +89,39 @@ test('market keeps absent submitters and statistics unknown while details remain
   assert.ok(ui.button('预览 Test pack'));
 });
 
+test('market resource categories separate appearance packs and retain their details and installation preview', async t => {
+  const skin = { ...entry, id: 'skin', name: 'Skin pack', category: 'appearance' };
+  const workflow = { ...entry, id: 'workflow', name: 'Workflow pack', category: 'workflow' };
+  const ui = harness(t, { status: () => response({ ...snapshot(), catalog: { ...catalog, entries: [entry, skin, workflow] } }), 'catalog-preview': () => response(plan()) });
+  await ui.settle(); ui.button('市场').props.onClick(); ui.render();
+  assert.equal(ui.button('功能包').props['aria-pressed'], true);
+  assert.equal(ui.all().filter(n => n.props['data-pack-id']).length, 2);
+  assert.ok(!ui.all().some(n => n.props['aria-label'] === '安装 Skin pack'));
+  assert.ok(ui.text().includes('功能包 · 2'));
+  ui.button('Test pack').props.onClick(); ui.render();
+  ui.button('外观包').props.onClick(); ui.render();
+  assert.equal(ui.button('外观包').props['aria-pressed'], true);
+  assert.equal(ui.all().filter(n => n.props['data-pack-id']).length, 1);
+  assert.ok(ui.button('安装 Skin pack'));
+  assert.ok(!ui.all().some(n => n.props['aria-label'] === '安装 Test pack'));
+  ui.button('Skin pack').props.onClick(); ui.render();
+  assert.ok(ui.button('预览 Skin pack'));
+  ui.button('返回目录').props.onClick(); ui.render();
+  assert.equal(ui.button('外观包').props['aria-pressed'], true);
+  await ui.button('安装 Skin pack').props.onClick(); await ui.settle();
+  assert.deepEqual(JSON.parse(ui.requests.find(r => r.action === 'catalog-preview').init.body), { id: 'skin', version: '1.0.0' });
+});
+
+test('empty appearance collection offers file import and leaves function packs available', async t => {
+  const ui = harness(t);
+  await ui.settle(); ui.button('市场').props.onClick(); ui.render();
+  ui.button('外观包').props.onClick(); ui.render();
+  assert.match(ui.text(), /暂无可展示的外观包；仍可从文件导入/);
+  assert.ok(!ui.all().some(n => n.props['data-pack-id']));
+  ui.button('功能包').props.onClick(); ui.render();
+  assert.ok(ui.button('安装 Test pack'));
+});
+
 test('kernel warnings remain visible without disabling selective installation', async t => {
   const warning = '声明内核范围不同，将逐项交由官版核验';
   const changed = { ...snapshot(), catalog: { ...catalog, entries: [{ ...entry, warning }] } };

@@ -13,6 +13,7 @@ const SITE_ROOT = new URL('../', CATALOG_URL);
 const LEGACY_ROOT = new URL('https://lanyun077.github.io/EAC-mojobox/');
 export interface CatalogEntry {
   id: string; version: string; name: string; description: string; author: string;
+  category?: 'function' | 'appearance' | 'workflow';
   source?: string;
   submitter?: { login: string; userId: number };
   downloadsAll?: number | null; downloads7d?: number | null; statisticsAt?: string; statisticsStale?: boolean;
@@ -54,7 +55,8 @@ export function parseCatalog(value: any): CatalogEntry[] {
       return { ref: plugin.ref, version: plugin.version, enabled: plugin.enabled };
     });
     if (!components.length) throw new Error('Catalog function pack has no components');
-    return { id: m.id, version: m.version, name: m.name, description: m.description, author: item.author, source: sourceUrl(item.source), requires: range, components, archiveUrl: archiveUrl(item.archiveUrl, m.id, m.version), archiveSize: item.archiveSize, archiveDigest: item.archiveDigest };
+    const category = ['function', 'appearance', 'workflow'].includes(m.category) ? m.category : undefined;
+    return { id: m.id, version: m.version, name: m.name, description: m.description, author: item.author, category, source: sourceUrl(item.source), requires: range, components, archiveUrl: archiveUrl(item.archiveUrl, m.id, m.version), archiveSize: item.archiveSize, archiveDigest: item.archiveDigest };
   });
 }
 
