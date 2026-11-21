@@ -12,7 +12,7 @@
 npm ci
 npm run typecheck
 npm test
-npm pack --dry-run --ignore-scripts
+npm run pack:release
 git diff --check
 ```
 
@@ -50,6 +50,29 @@ npm pack ./fixtures/p1/last --pack-destination ./artifacts --ignore-scripts
 2. 执行上方验证，确认没有生成物、个人路径、凭据、完整 Profile 或本机报告。
 3. 提交 PR，说明目的、实际行为、协议与兼容影响、已执行验证、未验证项和回退方式。
 4. 等待 CI 与维护者审核。推送／合并只是源码变更，不等于客户端生效或正式上线。
+
+### PR 验收与合并权限
+
+所有 PR 都运行现有 CI，必需状态为 GitHub Actions 的 `check (windows-latest)` 和 `check (ubuntu-latest)`。
+默认要求一个审核批准，有新提交时撤销旧批准，并解决审核对话；不强制分支更新到最新 `main`。
+
+仓库所有者及具有 Write、Maintain 或 Admin 权限的协作者可在验收后，于 PR 合并界面选择跳过 CI 和审核要求，
+无须等待检查或另一人批准，由合并者负责验收。CI 仍正常运行，跳过合并检查不会将失败结果改成成功。
+外部贡献者通过 Fork + PR 提交，没有仓库写入或直接合并权限，须由上述维护者验收合并；不启用自动合并。
+
+`main-ci` 与 `main-pr-review` Rulesets 仅允许上述维护者在 PR 中豁免，不允许直接推送 `main`；
+独立的 `main-history` 禁止强推和删除 `main`，无豁免者。这些是 GitHub 远端设置，文档本身不会修改权限。
+
+验收时核对变更目的、兼容影响、实际验证及未验证项；安装或升级行为变化还需独立测试环境中的真实联调记录，
+不能以模拟测试代替用户配置保护或宿主安装结果。按 PR 模板记录结论；跳过 CI 时注明原因和替代验证。
+
+只读核对：
+
+```bash
+gh api repos/lanyun077/Mojobox-Installer/rulesets
+gh api repos/lanyun077/Mojobox-Installer/rules/branches/main
+gh pr checks <number> --repo lanyun077/Mojobox-Installer
+```
 
 `private: true` 保持有效；预构建包通过 GitHub Release 分发，不发布 npm。
 版本、目标官版、安装与升级验证、文件清单及回退要求见[发行说明](docs/releasing.md)；本仓当前没有自动发布流程。

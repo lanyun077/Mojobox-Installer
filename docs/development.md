@@ -13,7 +13,7 @@ cd Mojobox-Installer
 npm ci
 npm run typecheck
 npm test
-npm pack --dry-run --ignore-scripts
+npm run pack:release
 git diff --check
 ```
 
@@ -21,6 +21,7 @@ git diff --check
 单独构建用 `npm run build`；生成预构建发行包用 `npm run pack:release`，产物位于 `artifacts/`。`lib/` 是构建输出，不提交。
 
 CI 在 Windows 和 Linux 的 Node.js 24 上执行上述检查；Linux CI 通过不代表 Linux 官版客户端已适配。
+PR 验收、维护者跳过检查的权限及外部贡献合并流程见[贡献指南](../CONTRIBUTING.md#pr-验收与合并权限)。
 仓库保留 `private: true`，推送代码不会自动发布 npm 包或客户端版本。
 用户安装入口见[安装说明](installation.md)，发布包的制作与上传见[发行说明](releasing.md)。
 
